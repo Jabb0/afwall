@@ -9,12 +9,12 @@
             android:summaryOn="@string/notify_pref_summary_on"
             android:title="@string/notify_pref_title" />
 
-        <SwitchPreference
+        <!--<SwitchPreference
             android:defaultValue="false"
             android:key="quickApply"
             android:enabled="false"
             android:summary="@string/quick_apply_summary"
-            android:title="@string/quick_apply_title" />
+            android:title="@string/quick_apply_title" />-->
         <CheckBoxPreference
             android:defaultValue="false"
             android:key="disableIcons"
@@ -26,6 +26,11 @@
             android:key="activeNotification"
             android:summary="@string/activeNotification_summary"
             android:title="@string/activeNotification" />
+        <CheckBoxPreference
+            android:defaultValue="true"
+            android:key="runNotification"
+            android:summary="@string/runNotification_summary"
+            android:title="@string/runNotification" />
         <ListPreference
             android:defaultValue="0"
             android:dependency="activeNotification"

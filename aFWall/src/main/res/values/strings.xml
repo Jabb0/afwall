@@ -582,4 +582,6 @@
     <string name="mount_initd_error">Unable to mount the directory</string>
     <string name="delete_initd_error">Unable to delete the startup script</string>
     <string name="port">Port</string>
+    <string name="runNotification_summary">Notification will be shown when applying rules</string>
+    <string name="runNotification">Run Notification</string>
 </resources>
