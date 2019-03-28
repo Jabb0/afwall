@@ -406,6 +406,7 @@ public final class Api {
             // FIXME: in whitelist mode this blocks everything
         } else {
             for (Integer uid : uids) {
+
                 // TODO: HERE IS THE PART FOR APP BASED RULES
                 // Check if the app is enabled for app based rules and process them in case
                 if (uid != null && uid >= 0) {
