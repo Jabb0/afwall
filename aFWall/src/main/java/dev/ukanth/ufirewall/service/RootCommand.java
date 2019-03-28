@@ -13,24 +13,35 @@ import static dev.ukanth.ufirewall.service.RootShellService.NO_TOAST;
  */
 
 public class RootCommand {
-    private List<String> commmands;
-
     public Callback cb = null;
     public int successToast = NO_TOAST;
     public int failureToast = NO_TOAST;
     public boolean reopenShell = false;
     public int retryExitCode = -1;
-
     public int commandIndex;
     public boolean ignoreExitCode;
     public Date startTime;
     public int retryCount;
-
     public StringBuilder res;
     public String lastCommand;
     public StringBuilder lastCommandResult;
     public int exitCode;
     public boolean done = false;
+
+    public RootCommand setIsv6(boolean isv6) {
+        this.isv6 = isv6;
+        return this;
+    }
+
+    public boolean isv6 = false;
+
+    private List<String> commmands;
+
+    private RootShellService rootShellService;
+
+    public RootCommand() {
+        rootShellService = new RootShellService();
+    }
 
 
     public List<String> getCommmands() {
@@ -39,13 +50,6 @@ public class RootCommand {
 
     public void setCommmands(List<String> commmands) {
         this.commmands = commmands;
-    }
-
-    public static abstract class Callback {
-        /**
-         * Optional user-specified callback
-         */
-        public abstract void cbFunc(RootCommand state);
     }
 
     /**
@@ -127,17 +131,10 @@ public class RootCommand {
      * @param script List of commands to run as root
      */
     public final void run(Context ctx, List<String> script) {
-        RootShellService.runScriptAsRoot(ctx, script, this, false);
-    }
-
-    /**
-     * Run a series of commands as root in thread mode; call cb.cbFunc() when complete
-     *
-     * @param ctx    Context object used to create toasts
-     * @param script List of commands to run as root
-     */
-    public final void runThread(Context ctx, List<String> script) {
-        RootShellService.runScriptAsRoot(ctx, script, this, true);
+        if(rootShellService == null) {
+            rootShellService =  new RootShellService();
+        }
+        rootShellService.runScriptAsRoot(ctx, script, this);
     }
 
     /**
@@ -147,8 +144,18 @@ public class RootCommand {
      * @param cmd Command to run as root
      */
     public final void run(Context ctx, String cmd) {
+        if(rootShellService == null) {
+            rootShellService =  new RootShellService();
+        }
         List<String> script = new ArrayList<String>();
         script.add(cmd);
-        RootShellService.runScriptAsRoot(ctx, script, this, false);
+        rootShellService.runScriptAsRoot(ctx, script, this);
+    }
+
+    public static abstract class Callback {
+        /**
+         * Optional user-specified callback
+         */
+        public abstract void cbFunc(RootCommand state);
     }
 }

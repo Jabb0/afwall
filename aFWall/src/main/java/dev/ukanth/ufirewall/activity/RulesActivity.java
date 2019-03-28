@@ -48,6 +48,7 @@ import dev.ukanth.ufirewall.R;
 import dev.ukanth.ufirewall.log.Log;
 import dev.ukanth.ufirewall.service.RootCommand;
 import dev.ukanth.ufirewall.util.G;
+import dev.ukanth.ufirewall.util.SecurityUtil;
 
 public class RulesActivity extends DataDumpActivity {
 
@@ -63,8 +64,21 @@ public class RulesActivity extends DataDumpActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setTitle(getString(R.string.showrules_title));
+
+        //coming from shortcut
+        Bundle bundle = getIntent().getExtras();
+        if (bundle != null) {
+            Object data = bundle.get("validate");
+            if (data != null) {
+                String check = (String) data;
+                if (check.equals("yes")) {
+                   new SecurityUtil( RulesActivity.this).passCheck();
+                }
+            }
+        }
         //sdDumpFile = "rules.log";
     }
+
 
     protected void populateMenu(SubMenu sub) {
         if (G.enableIPv6()) {
@@ -159,7 +173,7 @@ public class RulesActivity extends DataDumpActivity {
         // Fourth section: "System info"
         writeHeading(result, true, "System info");
 
-        InterfaceDetails cfg = InterfaceTracker.getCurrentCfg(ctx);
+        InterfaceDetails cfg = InterfaceTracker.getCurrentCfg(ctx, false);
 
         result.append("Android version: " + android.os.Build.VERSION.RELEASE + "\n");
         result.append("Manufacturer: " + android.os.Build.MANUFACTURER + "\n");
@@ -332,4 +346,6 @@ public class RulesActivity extends DataDumpActivity {
                 })
                 .show();
     }
+
+
 }

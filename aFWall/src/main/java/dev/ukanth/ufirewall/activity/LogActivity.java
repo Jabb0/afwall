@@ -60,6 +60,7 @@ import dev.ukanth.ufirewall.log.LogRecyclerViewAdapter;
 import dev.ukanth.ufirewall.log.RecyclerItemClickListener;
 import dev.ukanth.ufirewall.util.DateComparator;
 import dev.ukanth.ufirewall.util.G;
+import dev.ukanth.ufirewall.util.SecurityUtil;
 
 public class LogActivity extends AppCompatActivity implements SwipeRefreshLayout.OnRefreshListener {
 
@@ -92,6 +93,17 @@ public class LogActivity extends AppCompatActivity implements SwipeRefreshLayout
         // Load partially transparent black background
         getSupportActionBar().setHomeButtonEnabled(true);
         getSupportActionBar().setDisplayHomeAsUpEnabled(true);
+
+        Bundle bundle = getIntent().getExtras();
+        if(bundle != null) {
+            Object data = bundle.get("validate");
+            if(data != null){
+                String check = (String) data;
+                if(check.equals("yes")) {
+                    new SecurityUtil(LogActivity.this).passCheck();
+                }
+            }
+        }
 
         mSwipeLayout = (SwipeRefreshLayout) findViewById(R.id.swipeContainer);
         mSwipeLayout.setOnRefreshListener(this);
@@ -338,7 +350,7 @@ public class LogActivity extends AppCompatActivity implements SwipeRefreshLayout
                     @Override
                     public void onClick(@NonNull MaterialDialog dialog, @NonNull DialogAction which) {
                         //SQLite.delete(LogData_Table.class);
-                        FlowManager.getDatabase(LogDatabase.NAME).reset(ctx);
+                        FlowManager.getDatabase(LogDatabase.NAME).reset();
                         Toast.makeText(ctx, ctx.getString(R.string.log_cleared), Toast.LENGTH_SHORT).show();
                         dialog.dismiss();
                         (new CollectLog()).setContext(LogActivity.this).execute();

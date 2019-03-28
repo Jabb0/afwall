@@ -9,7 +9,7 @@ import com.raizlabs.android.dbflow.structure.BaseModel;
  * Created by ukanth on 17/1/16.
  */
 
-@Table(database = LogDatabase.class)
+@Table(database = LogDatabase.class,cachingEnabled = true)
 //,indexGroups = { @IndexGroup(number = 1, name = "uidIndex"),})
 public class LogData extends BaseModel {
     @Column
@@ -40,6 +40,28 @@ public class LogData extends BaseModel {
     private int dpt;
     @Column
     private long timestamp;
+
+    public String getHostname() {
+        return hostname;
+    }
+
+    public void setHostname(String hostname) {
+        this.hostname = hostname;
+    }
+
+    public int getType() {
+        return type;
+    }
+
+    public void setType(int type) {
+        this.type = type;
+    }
+
+    @Column
+    private String hostname;
+
+    @Column
+    private int type;
 
     public long getCount() {
         return count;

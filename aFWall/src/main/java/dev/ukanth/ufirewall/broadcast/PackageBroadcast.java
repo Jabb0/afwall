@@ -23,6 +23,8 @@
 package dev.ukanth.ufirewall.broadcast;
 
 import android.Manifest;
+import android.app.Notification;
+import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
@@ -33,6 +35,7 @@ import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.PackageManager.NameNotFoundException;
 import android.net.Uri;
+import android.os.Build;
 import android.preference.PreferenceManager;
 import android.support.v4.app.NotificationCompat;
 
@@ -43,6 +46,7 @@ import dev.ukanth.ufirewall.MainActivity;
 import dev.ukanth.ufirewall.R;
 import dev.ukanth.ufirewall.log.Log;
 import dev.ukanth.ufirewall.service.RootCommand;
+import dev.ukanth.ufirewall.util.G;
 
 /**
  * Broadcast receiver responsible for removing rules that affect uninstalled
@@ -50,11 +54,7 @@ import dev.ukanth.ufirewall.service.RootCommand;
  */
 public class PackageBroadcast extends BroadcastReceiver {
 
-    enum NotificationType {
-        newinstall, update
-    }
-
-    ;
+    public static final String TAG = "AFWall";
 
     @Override
     public void onReceive(final Context context, final Intent intent) {
@@ -62,11 +62,11 @@ public class PackageBroadcast extends BroadcastReceiver {
         Uri inputUri = Uri.parse(intent.getDataString());
 
         if (!inputUri.getScheme().equals("package")) {
-            Log.d("AFWall+", "Intent scheme was not 'package'");
+            Log.d(TAG, "Intent scheme was not 'package'");
             return;
         }
 
-        if (Intent.ACTION_PACKAGE_REMOVED.equals(intent.getAction())) {
+        if (Intent.ACTION_PACKAGE_FULLY_REMOVED.equals(intent.getAction())) {
             // Ignore application updates
             final boolean replacing = intent.getBooleanExtra(
                     Intent.EXTRA_REPLACING, false);
@@ -99,7 +99,7 @@ public class PackageBroadcast extends BroadcastReceiver {
                 // Force app list reload next time
                 Api.applications = null;
                 SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context);
-                boolean isNotify = prefs.getBoolean("notifyAppInstall", false);
+                boolean isNotify = prefs.getBoolean("notifyAppInstall", true);
                 if (isNotify && Api.isEnabled(context)) {
                     String added_package = intent.getData().getSchemeSpecificPart();
                     final PackageManager pkgmanager = context.getPackageManager();
@@ -108,7 +108,7 @@ public class PackageBroadcast extends BroadcastReceiver {
                         ApplicationInfo applicationInfo = pkgmanager.getApplicationInfo(added_package, 0);
                         label = pkgmanager.getApplicationLabel(applicationInfo).toString();
                         if (PackageManager.PERMISSION_GRANTED == pkgmanager.checkPermission(Manifest.permission.INTERNET, added_package)) {
-                            notifyApp(context, intent, label);
+                            addNotification(context,label);
                         }
                         if (Api.recentlyInstalled == null) {
                             Api.recentlyInstalled = new HashSet<>();
@@ -121,33 +121,52 @@ public class PackageBroadcast extends BroadcastReceiver {
         }
     }
 
-    //@SuppressWarnings("deprecation")
-    public void notifyApp(Context context, Intent intent2, String label) {
-        String ns = Context.NOTIFICATION_SERVICE;
 
-        NotificationManager mNotificationManager = (NotificationManager) context
-                .getSystemService(ns);
+    private void addNotification(Context context, String label) {
+        final int NOTIFICATION_ID = 3;
+        String NOTIFICATION_CHANNEL_ID = "firewall.app.notification";
+        String channelName = context.getString(R.string.app_notification);
 
-        int icon = R.drawable.notification_quest;
+        //cancel existing notification
+        NotificationManager manager = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+        manager.cancel(NOTIFICATION_ID);
 
-        NotificationCompat.Builder builder = new NotificationCompat.Builder(context);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel chan = new NotificationChannel(NOTIFICATION_CHANNEL_ID, channelName, NotificationManager.IMPORTANCE_DEFAULT);
+            chan.setShowBadge(false);
+            chan.setSound(null,null);
+            chan.enableLights(false);
+            chan.enableVibration(false);
+            chan.setLockscreenVisibility(Notification.VISIBILITY_PRIVATE);
+            assert manager != null;
+            manager.createNotificationChannel(chan);
+        }
+
 
         Intent appIntent = new Intent(context, MainActivity.class);
-        PendingIntent in = PendingIntent.getActivity(context, 0, appIntent, 0);
+        appIntent.setAction(Intent.ACTION_MAIN);
+        appIntent.addCategory(Intent.CATEGORY_LAUNCHER);
+        appIntent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+
+        PendingIntent notifyPendingIntent = PendingIntent.getActivity(context, 0, appIntent, PendingIntent.FLAG_UPDATE_CURRENT);
+        NotificationCompat.Builder notificationBuilder = new NotificationCompat.Builder(context, NOTIFICATION_CHANNEL_ID);
+        notificationBuilder.setContentIntent(notifyPendingIntent);
 
         String notificationText = context.getString(R.string.notification_new);
         if (label != null) {
             notificationText = label + "-" + context.getString(R.string.notification_new_package);
         }
-        builder.setSmallIcon(icon)
-                .setAutoCancel(true)
+
+        Notification notification = notificationBuilder.setOngoing(false)
+                .setPriority(NotificationManager.IMPORTANCE_DEFAULT)
+                .setCategory(Notification.CATEGORY_SERVICE)
+                .setSound(null)
+                .setSmallIcon(R.drawable.notification_quest)
                 .setContentTitle(context.getString(R.string.notification_title))
                 .setTicker(context.getString(R.string.notification_title))
-                .setContentText(notificationText);
-        builder.setContentIntent(in);
+                .setContentText(notificationText)
+                .build();
 
-        mNotificationManager.notify(Api.NOTIFICATION_ID, builder.build());
-
+        manager.notify(NOTIFICATION_ID, notification);
     }
-
 }

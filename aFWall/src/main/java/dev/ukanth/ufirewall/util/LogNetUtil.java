@@ -7,6 +7,13 @@ import android.support.annotation.NonNull;
 import com.afollestad.materialdialogs.DialogAction;
 import com.afollestad.materialdialogs.MaterialDialog;
 
+import org.xbill.DNS.ARecord;
+import org.xbill.DNS.Address;
+import org.xbill.DNS.Credibility;
+import org.xbill.DNS.Lookup;
+import org.xbill.DNS.Record;
+import org.xbill.DNS.Type;
+
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
@@ -101,7 +108,13 @@ public class LogNetUtil {
                     case RESOLVE:
                         // Resolve
                         try {
-                            return InetAddress.getByName(params[0].address).getCanonicalHostName();
+                            InetAddress inetAddress = InetAddress.getByName(params[0].address);
+                            // String name = Address.getHostName(InetAddress.getByName(params[0].address));
+                            if (inetAddress != null) {
+                                return inetAddress.getHostName();
+                            } else {
+                                return "<Unable to resolve host>";
+                            }
                         } catch (UnknownHostException ex) {
                             Log.e(TAG, "Exception(02): " + ex.getMessage());
                             return String.format("Currently can not resolve Host for IP(%s), timeout: %d ms", params[0].address, finish_time());
@@ -112,6 +125,7 @@ public class LogNetUtil {
             }
             return context.getString(R.string.error_or_unknown_category);
         }
+
 
         @Override
         protected void onPostExecute(String s) {

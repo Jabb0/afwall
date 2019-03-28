@@ -23,6 +23,7 @@
 
 package dev.ukanth.ufirewall.util;
 
+import android.app.Activity;
 import android.app.Application;
 import android.content.Context;
 import android.content.SharedPreferences;
@@ -30,6 +31,7 @@ import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.database.sqlite.SQLiteCantOpenDatabaseException;
 import android.graphics.Color;
+import android.os.Bundle;
 import android.preference.PreferenceManager;
 import android.text.TextUtils;
 import android.util.DisplayMetrics;
@@ -37,18 +39,38 @@ import android.view.WindowManager;
 
 import com.raizlabs.android.dbflow.config.FlowConfig;
 import com.raizlabs.android.dbflow.config.FlowManager;
+import com.raizlabs.android.dbflow.sql.language.SQLite;
 
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 
 import dev.ukanth.ufirewall.Api;
 import dev.ukanth.ufirewall.BuildConfig;
+import dev.ukanth.ufirewall.MainActivity;
 import dev.ukanth.ufirewall.log.Log;
+import dev.ukanth.ufirewall.log.LogPreference;
+import dev.ukanth.ufirewall.log.LogPreferenceDB;
+import dev.ukanth.ufirewall.log.LogPreference_Table;
 
-public class G extends Application {
+public class G extends Application implements Application.ActivityLifecycleCallbacks{
+
+    private static G instance;
+
+    private static boolean isActivityVisible;
+
+    public static G getInstance() {
+        return instance;
+    }
+
+    public static Context getContext() {
+        return instance;
+    }
 
     public static final String TAG = "AFWall";
 
@@ -59,13 +81,16 @@ public class G extends Application {
     private static final String ENABLE_ROAM = "enableRoam";
     private static final String ENABLE_VPN = "enableVPN";
     private static final String ENABLE_LAN = "enableLAN";
+    private static final String ENABLE_TOR = "enableTor";
     private static final String ENABLE_IPV6 = "enableIPv6";
     private static final String CONTROL_IPV6 = "controlIPv6";
+    private static final String SELECTED_FILTER = "selectedFilter";
     //private static final String BLOCK_IPV6 = "blockIPv6";
     private static final String ENABLE_INBOUND = "enableInbound";
     private static final String ENABLE_LOG_SERVICE = "enableLogService";
     private static final String LOG_PING_TIMEOUT = "logPingTime";
     //private static final String ENABLE_ADMIN = "enableAdmin";
+    private static final String DUAL_APPS = "supportDualApps";
     private static final String ENABLE_DEVICE_CHECK = "enableDeviceCheck";
     private static final String ENABLE_CONFIRM = "enableConfirm";
     private static final String ENABLE_MULTI_PROFILE = "enableMultiProfile";
@@ -86,6 +111,7 @@ public class G extends Application {
     private static final String ACTIVE_NOTIFICATION = "activeNotification";
     private static final String PROFILE_SWITCH = "applyOnSwitchProfiles";
     private static final String LOG_TARGET = "logTarget";
+    private static final String SHOW_HOST = "showHostName";
     private static final String APP_VERSION = "appVersion";
     private static final String DNS_PROXY = "dns_value";
     private static final String MULTI_USER = "multiUser";
@@ -115,7 +141,7 @@ public class G extends Application {
     private static final String PROFILES_MIGRATED = "profilesmigrated";
     private static final String WIDGET_X = "widgetX";
     private static final String WIDGET_Y = "widgetY";
-    private static final String XPOSED_FIX_DM_LEAK = "fixDownloadManagerLeak";
+    //private static final String XPOSED_FIX_DM_LEAK = "fixDownloadManagerLeak";
 
     //ippreference
     private static final String IP4_INPUT = "input_chain";
@@ -145,6 +171,16 @@ public class G extends Application {
         gPrefs.edit().putStringSet("storedPid", store).commit();
     }
 
+    public static boolean supportDual() {
+        return gPrefs.getBoolean(DUAL_APPS, false);
+    }
+
+    public static boolean supportDual(boolean val) {
+        gPrefs.edit().putBoolean(DUAL_APPS, val).commit();
+        return val;
+    }
+
+
     public static boolean isFaster() {
         return gPrefs.getBoolean(FASTER_RULES, false);
     }
@@ -156,7 +192,7 @@ public class G extends Application {
 
 
     public static boolean isRun() {
-        return gPrefs.getBoolean(RUN_NOTIFICATION, false);
+        return gPrefs.getBoolean(RUN_NOTIFICATION, true);
     }
 
     public static boolean isRun(boolean val) {
@@ -197,7 +233,7 @@ public class G extends Application {
     }
 
     public static boolean ipv6Fwd() {
-        return gPrefs.getBoolean(IP6_FWD, false);
+        return gPrefs.getBoolean(IP6_FWD, true);
     }
 
     public static boolean ipv6Fwd(boolean val) {
@@ -206,7 +242,7 @@ public class G extends Application {
     }
 
     public static boolean ipv6Input() {
-        return gPrefs.getBoolean(IP6_INPUT, false);
+        return gPrefs.getBoolean(IP6_INPUT, true);
     }
 
     public static boolean ipv6Input(boolean val) {
@@ -215,7 +251,7 @@ public class G extends Application {
     }
 
     public static boolean ipv6Output() {
-        return gPrefs.getBoolean(IP6_OUTPUT, false);
+        return gPrefs.getBoolean(IP6_OUTPUT, true);
     }
 
     public static boolean ipv6Output(boolean val) {
@@ -275,14 +311,14 @@ public class G extends Application {
         return val;
     }
 
-    public static boolean isXposedDM() {
+  /*  public static boolean isXposedDM() {
         return gPrefs.getBoolean(XPOSED_FIX_DM_LEAK, false);
     }
 
     public static boolean isXposedDM(boolean val) {
         gPrefs.edit().putBoolean(XPOSED_FIX_DM_LEAK, val).commit();
         return val;
-    }
+    }*/
 
     public static boolean hasRoot() {
         return gPrefs.getBoolean(HAS_ROOT, false);
@@ -294,7 +330,7 @@ public class G extends Application {
     }
 
     public static boolean activeNotification() {
-        return gPrefs.getBoolean(ACTIVE_NOTIFICATION, false);
+        return gPrefs.getBoolean(ACTIVE_NOTIFICATION, true);
     }
 
     public static boolean activeNotification(boolean val) {
@@ -320,7 +356,7 @@ public class G extends Application {
     }
 
     public static boolean enableIPv6() {
-        return gPrefs.getBoolean(ENABLE_IPV6, false);
+        return gPrefs.getBoolean(ENABLE_IPV6, true);
     }
 
     public static boolean enableIPv6(boolean val) {
@@ -373,6 +409,16 @@ public class G extends Application {
         gPrefs.edit().putBoolean(ENABLE_ADMIN, val).commit();
         return val;
     }*/
+
+    public static boolean showHost() {
+        return gPrefs.getBoolean(SHOW_HOST, false);
+    }
+
+    public static boolean showHost(boolean val) {
+        gPrefs.edit().putBoolean(SHOW_HOST, val).commit();
+        return val;
+    }
+
 
     public static boolean enableDeviceCheck() {
         return gPrefs.getBoolean(ENABLE_DEVICE_CHECK, false);
@@ -455,7 +501,7 @@ public class G extends Application {
     }
 
     public static String locale() {
-        return gPrefs.getString(LANGUAGE, "en");
+        return PreferenceManager.getDefaultSharedPreferences(ctx).getString(LANGUAGE, "en");
     }
 
     public static String locale(String val) {
@@ -534,6 +580,16 @@ public class G extends Application {
         return val;
     }
 
+    public static void saveSelectedFilter(int i) {
+        gPrefs.edit().putInt(SELECTED_FILTER, i).commit();
+    }
+
+    public static int selectedFilter() {
+        return gPrefs.getInt(SELECTED_FILTER, 99);
+    }
+
+
+
     public static int appVersion() {
         return gPrefs.getInt(APP_VERSION, 0);
     }
@@ -603,6 +659,16 @@ public class G extends Application {
         return val;
     }
 
+    public static boolean enableTor() {
+        return gPrefs.getBoolean(ENABLE_TOR, false);
+    }
+
+    public static boolean enableTor(boolean val) {
+        gPrefs.edit().putBoolean(ENABLE_TOR, val).commit();
+        return val;
+    }
+
+
     public static boolean isDonate() {
         return BuildConfig.APPLICATION_ID.equals("dev.ukanth.ufirewall.donate");
     }
@@ -615,7 +681,7 @@ public class G extends Application {
                     gPrefs.edit().putBoolean(REG_DO, true).commit();
                 }
 
-            } catch (PackageManager.NameNotFoundException | NullPointerException e ) {
+            } catch (PackageManager.NameNotFoundException | NullPointerException e) {
                 gPrefs.edit().putBoolean(REG_DO, false).commit();
             }
         }
@@ -668,7 +734,32 @@ public class G extends Application {
         gPrefs.edit().putString(BLOCKED_NOTIFICATION, listString).commit();
     }
 
-    public static List<String> getBlockedNotifyApps() {
+
+    public static void storeBlockedApps(List<Integer> list) {
+        // store to DB
+        for (Integer uid : list) {
+            LogPreference preference = new LogPreference();
+            preference.setUid(uid);
+            preference.setTimestamp(System.currentTimeMillis());
+            preference.setDisable(true);
+            FlowManager.getDatabase(LogPreferenceDB.class).beginTransactionAsync(databaseWrapper -> preference.save(databaseWrapper)).build().execute();
+        }
+    }
+
+    public static List<Integer> readBlockedApps() {
+        List<LogPreference> list = SQLite.select()
+                .from(LogPreference.class)
+                .queryList();
+        List<Integer> listSelected = new ArrayList<>();
+        for (LogPreference pref : list) {
+            if (pref.isDisable()) {
+                listSelected.add(pref.getUid());
+            }
+        }
+        return listSelected;
+    }
+
+   /* public static List<String> getBlockedNotifyApps() {
         String blockedApps = gPrefs.getString(BLOCKED_NOTIFICATION, null);
         List<String> data = new ArrayList<String>();
         if (blockedApps != null) {
@@ -677,7 +768,7 @@ public class G extends Application {
             }
         }
         return data;
-    }
+    }*/
 
     public static List<Integer> getBlockedNotifyList() {
         List<Integer> data = new ArrayList<Integer>();
@@ -709,7 +800,14 @@ public class G extends Application {
         return false;
     }
 
+
+    @Override
     public void onCreate() {
+        instance = this;
+        //Shell.setFlags(Shell.ROOT_SHELL);
+        //Shell.setFlags(Shell.FLAG_REDIRECT_STDERR);
+        //Shell.verboseLogging(BuildConfig.DEBUG);
+        registerActivityLifecycleCallbacks(this);
         super.onCreate();
         try {
             FlowManager.init(new FlowConfig.Builder(this)
@@ -719,7 +817,10 @@ public class G extends Application {
         }
         ctx = this.getApplicationContext();
         reloadPrefs();
+
+        //registerNetworkObserver();
     }
+
 
     public static void reloadPrefs() {
         gPrefs = PreferenceManager.getDefaultSharedPreferences(ctx);
@@ -814,4 +915,110 @@ public class G extends Application {
         List<String> items = new ArrayList<String>(Arrays.asList(default_profiles));
         return items;
     }
+
+    public static void updateLogNotification(int uid, boolean isChecked) {
+        //update logic here
+        LogPreference preference = new LogPreference();
+        preference.setUid(uid);
+        preference.setTimestamp(System.currentTimeMillis());
+        preference.setDisable(isChecked);
+        FlowManager.getDatabase(LogPreferenceDB.class).beginTransactionAsync(databaseWrapper -> preference.save(databaseWrapper)).build().execute();
+    }
+
+    public static void isNotificationMigrated(boolean b) {
+        gPrefs.edit().putBoolean("NewDBNotification", b).commit();
+        gPrefs.edit().putString(BLOCKED_NOTIFICATION, "").commit();
+    }
+
+    public static boolean isNotificationMigrated() {
+        return gPrefs.getBoolean("NewDBNotification", false);
+    }
+
+    public static boolean canShow(int uid) {
+        LogPreference logPreference = SQLite.select()
+                .from(LogPreference.class)
+                .where(LogPreference_Table.uid.eq(uid)).querySingle();
+        return (logPreference == null) || !logPreference.isDisable();
+    }
+
+    public static boolean isActivityVisible() {
+        return activityVisible;
+    }
+
+    public static void activityResumed() {
+        activityVisible = true;
+    }
+
+    public static void activityPaused() {
+        activityVisible = false;
+    }
+
+    private static boolean activityVisible;
+
+
+    @Override
+    public void onActivityCreated(Activity activity, Bundle savedInstanceState) {
+
+    }
+
+    @Override
+    public void onActivityStarted(Activity activity) {
+
+    }
+
+    @Override
+    public void onActivityResumed(Activity activity) {
+        if (activity instanceof MainActivity) {
+            isActivityVisible = true;
+        }
+    }
+
+    @Override
+    public void onActivityPaused(Activity activity) {
+
+    }
+
+    @Override
+    public void onActivityStopped(Activity activity) {
+        if (activity instanceof MainActivity) {
+            isActivityVisible = false;
+        }
+
+    }
+
+    @Override
+    public void onActivitySaveInstanceState(Activity activity, Bundle outState) {
+    }
+
+    @Override
+    public void onActivityDestroyed(Activity activity) { }
+
+
+    private static Pattern VALID_IPV4_PATTERN = null;
+    private static Pattern VALID_IPV6_PATTERN = null;
+    private static final String ipv4Pattern = "(([01]?\\d\\d?|2[0-4]\\d|25[0-5])\\.){3}([01]?\\d\\d?|2[0-4]\\d|25[0-5])";
+    private static final String ipv6Pattern = "^(((?=(?>.*?::)(?!.*::)))(::)?([0-9A-F]{1,4}::?){0,5}"
+            + "|([0-9A-F]{1,4}:){6})(\\2([0-9A-F]{1,4}(::?|$)){0,2}|((25[0-5]"
+            + "|(2[0-4]|1\\d|[1-9])?\\d)(\\.|$)){4}|[0-9A-F]{1,4}:[0-9A-F]{1,"
+            + "4})(?<![^:]:|\\.)\\z";
+
+    static {
+        try {
+            VALID_IPV4_PATTERN = Pattern.compile(ipv4Pattern, Pattern.CASE_INSENSITIVE);
+            VALID_IPV6_PATTERN = Pattern.compile(ipv6Pattern, Pattern.CASE_INSENSITIVE);
+        } catch (PatternSyntaxException e) {
+            //logger.severe("Unable to compile pattern", e);
+        }
+    }
+
+    public static boolean isIp4Address(String ipAddress) {
+        Matcher m1 = G.VALID_IPV4_PATTERN.matcher(ipAddress);
+        return m1.matches();
+    }
+
+    public static boolean isIp6Address(String ipAddress) {
+        Matcher m2 = G.VALID_IPV6_PATTERN.matcher(ipAddress);
+        return m2.matches();
+    }
+
 }

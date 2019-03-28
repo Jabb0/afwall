@@ -5,7 +5,6 @@ import android.content.DialogInterface;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.PackageManager.NameNotFoundException;
-import android.net.TrafficStats;
 import android.os.Bundle;
 import android.support.v7.app.AlertDialog;
 import android.support.v7.app.AppCompatActivity;
@@ -16,6 +15,7 @@ import android.view.View;
 import android.view.View.OnClickListener;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.CompoundButton;
 import android.widget.EditText;
 import android.widget.ImageView;
@@ -23,6 +23,12 @@ import android.widget.ListView;
 import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
+
+import com.raizlabs.android.dbflow.sql.language.SQLite;
+import com.stericson.rootshell.RootShell;
+import com.stericson.rootshell.execution.Command;
+import com.stericson.rootshell.execution.Shell;
+import com.stericson.roottools.RootTools;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -34,12 +40,14 @@ import java.util.Arrays;
 import dev.ukanth.ufirewall.Api;
 import dev.ukanth.ufirewall.R;
 import dev.ukanth.ufirewall.log.Log;
+import dev.ukanth.ufirewall.log.LogPreference;
+import dev.ukanth.ufirewall.log.LogPreference_Table;
+import dev.ukanth.ufirewall.util.G;
 import dev.ukanth.ufirewall.util.AppBasedRule;
 import dev.ukanth.ufirewall.util.AppBasedRulesListAdapter;
 
 public class AppDetailActivity extends AppCompatActivity {
     public static final String TAG = "AFWall";
-    private static String packageName = "";
 
     ArrayList<AppBasedRule> rules;
     AppBasedRulesListAdapter adapter;
@@ -51,9 +59,31 @@ public class AppDetailActivity extends AppCompatActivity {
         setTitle(getString(R.string.traffic_detail_title));
         setContentView(R.layout.app_detail);
 
+        int appid = getIntent().getIntExtra("appid", -1);
+        String packageName = getIntent().getStringExtra("package");
+        try {
+            CheckBox logOption = (CheckBox) findViewById(R.id.notification_p);
+
+            LogPreference logPreference = SQLite.select()
+                    .from(LogPreference.class)
+                    .where(LogPreference_Table.uid.eq(appid)).querySingle();
+
+            if (logPreference != null) {
+                logOption.setChecked(logPreference.isDisable());
+            }
+
+            logOption.setOnCheckedChangeListener((buttonView, isChecked) -> {
+                //only use when triggered by user
+                if (buttonView.isPressed()) {
+                    // write the logic here
+                    G.updateLogNotification(appid, isChecked);
+                }
+            });
+        } catch (Exception e) {
+        }
+
         Toolbar toolbar = (Toolbar) findViewById(R.id.app_toolbar);
         setSupportActionBar(toolbar);
-
 
         getSupportActionBar().setHomeButtonEnabled(true);
         getSupportActionBar().setDisplayHomeAsUpEnabled(true);
@@ -65,46 +95,49 @@ public class AppDetailActivity extends AppCompatActivity {
         TextView textView2 = (TextView) findViewById(R.id.app_package);
         TextView up = (TextView) findViewById(R.id.up);
         TextView down = (TextView) findViewById(R.id.down);
-        
+
         /**/
 
-        int appid = getIntent().getIntExtra("appid", -1);
-        if (appid > 0) {
+        final PackageManager packageManager = getApplicationContext().getPackageManager();
+        final String[] packageNameList = ctx.getPackageManager().getPackagesForUid(appid);
 
-            final PackageManager packageManager = getApplicationContext().getPackageManager();
-            final String[] packageNameList = ctx.getPackageManager().getPackagesForUid(appid);
+        final String pName = packageName;
+        Button button = findViewById(R.id.app_settings);
+        button.setOnClickListener(v -> Api.showInstalledAppDetails(getApplicationContext(), pName));
+        ApplicationInfo applicationInfo;
 
-            if (packageNameList != null) {
-                packageName = packageNameList.length > 0 ? packageNameList[0] : ctx.getPackageManager().getNameForUid(appid);
-            } else {
-                packageName = ctx.getPackageManager().getNameForUid(appid);
-            }
-
-
-            Button button = (Button) findViewById(R.id.app_settings);
-            button.setOnClickListener(new OnClickListener() {
-                public void onClick(View v) {
-                    Api.showInstalledAppDetails(getApplicationContext(), packageName);
-                }
-            });
-            ApplicationInfo applicationInfo;
-
-            try {
+        try {
+            if (!packageName.startsWith("dev.afwall.special.")) {
                 applicationInfo = packageManager.getApplicationInfo(packageName, PackageManager.GET_META_DATA);
-                image.setImageDrawable(applicationInfo.loadIcon(packageManager));
-                textView.setText(packageManager.getApplicationLabel(applicationInfo));
-                if (packageNameList.length > 1) {
-                    textView2.setText(Arrays.toString(packageNameList));
-                    button.setEnabled(false);
-                } else {
-                    textView2.setText(packageName);
+                if (applicationInfo != null) {
+                    image.setImageDrawable(applicationInfo.loadIcon(packageManager));
+                    String name = packageManager.getApplicationLabel(applicationInfo).toString();
+                    textView.setText(name);
+                    setTotalBytesManual(down, up, applicationInfo.uid);
                 }
-                setTotalBytesManual(down, up, applicationInfo.uid);
-            } catch (final NameNotFoundException e) {
+            } else {
+                image.setImageDrawable(getApplicationContext().getResources().getDrawable(R.drawable.ic_android_white_24dp));
+                if(appid >= 0) {
+                    textView.setText(Api.getSpecialDescription(getApplicationContext(), packageName.replace("dev.afwall.special.", "")));
+                } else {
+                    textView.setText(Api.getSpecialDescriptionSystem(getApplicationContext(), packageName.replace("dev.afwall.special.", "")));
+                }
                 down.setText(" : " + humanReadableByteCount(0, false));
                 up.setText(" : " + humanReadableByteCount(0, false));
                 button.setEnabled(false);
             }
+
+            if (packageNameList != null && packageNameList.length > 1) {
+                textView2.setText(Arrays.toString(packageNameList));
+                button.setEnabled(false);
+            } else {
+                textView2.setText(packageName);
+            }
+
+        } catch (final NameNotFoundException e) {
+            down.setText(" : " + humanReadableByteCount(0, false));
+            up.setText(" : " + humanReadableByteCount(0, false));
+            button.setEnabled(false);
         }
 
         Button add_firewall_rule = (Button) findViewById(R.id.add_app_based_rule);
@@ -178,7 +211,7 @@ public class AppDetailActivity extends AppCompatActivity {
         File dir = new File("/proc/uid_stat/");
         down.setText(" : " + humanReadableByteCount(Long.parseLong("0"), false));
         up.setText(" : " + humanReadableByteCount(Long.parseLong("0"), false));
-        if(dir.exists()) {
+        if (dir.exists()) {
             String[] children = dir.list();
             if (!Arrays.asList(children).contains(String.valueOf(localUid))) {
                 down.setText(" : " + humanReadableByteCount(Long.parseLong("0"), false));
@@ -186,34 +219,39 @@ public class AppDetailActivity extends AppCompatActivity {
                 return;
             }
             File uidFileDir = new File("/proc/uid_stat/" + String.valueOf(localUid));
-            if(uidFileDir.exists()) {
+            if (uidFileDir.exists()) {
                 File uidActualFileReceived = new File(uidFileDir, "tcp_rcv");
                 File uidActualFileSent = new File(uidFileDir, "tcp_snd");
                 String textReceived = "0";
                 String textSent = "0";
                 try {
-                    if(uidActualFileReceived.exists() && uidActualFileSent.exists() ) {
-                        BufferedReader brReceived = new BufferedReader(new FileReader(uidActualFileReceived));
-                        BufferedReader brSent = new BufferedReader(new FileReader(uidActualFileSent));
-                        String receivedLine;
-                        String sentLine;
-                        if ((receivedLine = brReceived.readLine()) != null) {
-                            textReceived = receivedLine;
-                        }
-                        if ((sentLine = brSent.readLine()) != null) {
-                            textSent = sentLine;
-                        }
-                        down.setText(" : " + humanReadableByteCount(Long.parseLong(textReceived), false));
-                        up.setText(" : " + humanReadableByteCount(Long.parseLong(textSent), false));
-                        brReceived.close();
-                        brSent.close();
+                    if (uidActualFileReceived.exists() && uidActualFileSent.exists()) {
+                        Command command = new Command(0, "cat " + uidActualFileReceived.getAbsolutePath())
+                        {
+                            @Override
+                            public void commandOutput(int id, String line) {
+                                down.setText(" : " + humanReadableByteCount(Long.parseLong(line), false));
+                                super.commandOutput(id, line);
+                            }
+                        };
+                        Command command1 = new Command(1, "cat " + uidActualFileSent.getAbsolutePath())
+                        {
+                            @Override
+                            public void commandOutput(int id, String line) {
+                                up.setText(" : " + humanReadableByteCount(Long.parseLong(line), false));
+                                super.commandOutput(id, line);
+                            }
+                        };
+                        Shell shell = RootTools.getShell(true);
+                        shell.add(command);
+                        shell.add(command1);
                     }
                 } catch (Exception e) {
                     Log.e(TAG, "Exception while reading tx bytes: " + e.getLocalizedMessage());
                 }
             }
         }
-       // return Long.valueOf(textReceived).longValue() + Long.valueOf(textReceived).longValue();
+        // return Long.valueOf(textReceived).longValue() + Long.valueOf(textReceived).longValue();
     }
 
     public static String humanReadableByteCount(long bytes, boolean si) {

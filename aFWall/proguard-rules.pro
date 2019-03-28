@@ -17,6 +17,10 @@
 #    @com.squareup.otto.Subscribe public *;
 #    @com.squareup.otto.Produce public *;
 #}
+
+-dontnote org.xbill.DNS.spi.DNSJavaNameServiceDescriptor
+-dontwarn org.xbill.DNS.spi.DNSJavaNameServiceDescriptor
+
 -keep enum org.greenrobot.eventbus.ThreadMode { *; }
 
 # Only required if you use AsyncExecutor
@@ -31,3 +35,5 @@
 -keep public class * extends android.support.v4.view.ActionProvider {
     public <init>(android.content.Context);
 }
+
+-optimizations !code/allocation/variable

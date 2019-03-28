@@ -56,12 +56,37 @@ import dev.ukanth.ufirewall.events.RxEvent;
 import dev.ukanth.ufirewall.service.LogService;
 import dev.ukanth.ufirewall.service.RootCommand;
 import dev.ukanth.ufirewall.util.G;
-import io.reactivex.functions.Consumer;
+import dev.ukanth.ufirewall.util.SecurityUtil;
+import io.reactivex.disposables.Disposable;
 
 public class PreferencesActivity extends PreferenceActivity implements SharedPreferences.OnSharedPreferenceChangeListener {
 
     private static final boolean ALWAYS_SIMPLE_PREFS = false;
     private Toolbar mToolBar;
+
+    private RxEvent rxEvent;
+    private Disposable disposable;
+
+    /**
+     * Helper method to determine if the device has an extra-large screen. For
+     * example, 10" tablets are extra-large.
+     */
+    private static boolean isXLargeTablet(Context context) {
+        return (context.getResources().getConfiguration().screenLayout & Configuration.SCREENLAYOUT_SIZE_MASK) >= Configuration.SCREENLAYOUT_SIZE_XLARGE;
+    }
+
+    /**
+     * Determines whether the simplified settings UI should be shown. This is
+     * true if this is forced via {@link #ALWAYS_SIMPLE_PREFS}, or the device
+     * doesn't have newer APIs like {@link PreferenceFragment}, or the device
+     * doesn't have an extra-large screen. In these cases, a single-pane
+     * "simplified" settings UI should be shown.
+     */
+    private static boolean isSimplePreferences(Context context) {
+        return ALWAYS_SIMPLE_PREFS
+                || Build.VERSION.SDK_INT < Build.VERSION_CODES.HONEYCOMB
+                || !isXLargeTablet(context);
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -70,20 +95,28 @@ public class PreferencesActivity extends PreferenceActivity implements SharedPre
         super.onCreate(savedInstanceState);
         prepareLayout();
         subscribe();
+
+        Bundle bundle = getIntent().getExtras();
+        if (bundle != null) {
+            Object data = bundle.get("validate");
+            if (data != null) {
+                String check = (String) data;
+                if (check.equals("yes")) {
+                    new SecurityUtil(PreferencesActivity.this).passCheck();
+                }
+            }
+        }
     }
 
     private void subscribe() {
-        RxEvent.subscribe(new Consumer<Object>() {
-            @Override
-            public void accept(Object event) throws Exception {
-                if (event instanceof RulesEvent) {
-                    ruleChangeApplyRules((RulesEvent) event);
-                } else if (event instanceof LogChangeEvent) {
-                    logDmesgChangeApplyRules((LogChangeEvent) event);
-                }
+        rxEvent = new RxEvent();
+        disposable = rxEvent.subscribe(event -> {
+            if (event instanceof RulesEvent) {
+                ruleChangeApplyRules((RulesEvent) event);
+            } else if (event instanceof LogChangeEvent) {
+                logDmesgChangeApplyRules((LogChangeEvent) event);
             }
         });
-
     }
 
     private void ruleChangeApplyRules(RulesEvent rulesEvent) {
@@ -112,7 +145,6 @@ public class PreferencesActivity extends PreferenceActivity implements SharedPre
     public void onStop() {
         super.onStop();
     }
-
 
     private void prepareLayout() {
         ViewGroup root = (ViewGroup) findViewById(android.R.id.content);
@@ -158,9 +190,10 @@ public class PreferencesActivity extends PreferenceActivity implements SharedPre
             }
         }
 
+        Api.fixFolderPermissionsAsync(context);
+
         return null;
     }
-
 
     @Override
     public void onResume() {
@@ -176,7 +209,6 @@ public class PreferencesActivity extends PreferenceActivity implements SharedPre
                 .unregisterOnSharedPreferenceChangeListener(this);
         super.onPause();
     }
-
 
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
@@ -202,7 +234,6 @@ public class PreferencesActivity extends PreferenceActivity implements SharedPre
                 || LanguagePreferenceFragment.class.getName().equals(fragmentName)) {
             return (true);
         }
-
         return (false);
     }
 
@@ -222,27 +253,6 @@ public class PreferencesActivity extends PreferenceActivity implements SharedPre
     @Override
     public boolean onIsMultiPane() {
         return isXLargeTablet(this) && !isSimplePreferences(this);
-    }
-
-    /**
-     * Helper method to determine if the device has an extra-large screen. For
-     * example, 10" tablets are extra-large.
-     */
-    private static boolean isXLargeTablet(Context context) {
-        return (context.getResources().getConfiguration().screenLayout & Configuration.SCREENLAYOUT_SIZE_MASK) >= Configuration.SCREENLAYOUT_SIZE_XLARGE;
-    }
-
-    /**
-     * Determines whether the simplified settings UI should be shown. This is
-     * true if this is forced via {@link #ALWAYS_SIMPLE_PREFS}, or the device
-     * doesn't have newer APIs like {@link PreferenceFragment}, or the device
-     * doesn't have an extra-large screen. In these cases, a single-pane
-     * "simplified" settings UI should be shown.
-     */
-    private static boolean isSimplePreferences(Context context) {
-        return ALWAYS_SIMPLE_PREFS
-                || Build.VERSION.SDK_INT < Build.VERSION_CODES.HONEYCOMB
-                || !isXLargeTablet(context);
     }
 
     public void logDmesgChangeApplyRules(LogChangeEvent logChangeEvent) {
@@ -275,20 +285,26 @@ public class PreferencesActivity extends PreferenceActivity implements SharedPre
         }
 
         if (key.equals("ip_path") || key.equals("dns_value")) {
-            RxEvent.publish(new RulesEvent("", ctx));
+            rxEvent.publish(new RulesEvent("", ctx));
         }
 
         if (key.equals("logDmesg")) {
-            RxEvent.publish(new LogChangeEvent("", ctx));
+            rxEvent.publish(new LogChangeEvent("", ctx));
         }
 
-        if (key.equals("activeNotification")) {
+        if (key.equals("notification_priority")) {
+            NotificationManager notificationManager = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
+            notificationManager.cancelAll();
+            Api.updateNotification(Api.isEnabled(ctx), ctx);
+        }
+
+        if(key.equals("activeNotification")) {
             boolean enabled = sharedPreferences.getBoolean(key, false);
-            if (enabled) {
-                Api.showNotification(Api.isEnabled(ctx), ctx);
-            } else {
+            if(!enabled) {
                 NotificationManager notificationManager = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
-                notificationManager.cancel(33341);
+                notificationManager.cancelAll();
+            } else {
+                Api.updateNotification(Api.isEnabled(ctx), ctx);
             }
         }
 
@@ -312,8 +328,19 @@ public class PreferencesActivity extends PreferenceActivity implements SharedPre
         }
     }
 
+
     @Override
     public void onDestroy() {
+        if (rxEvent != null && disposable != null) {
+            disposable.dispose();
+        }
         super.onDestroy();
     }
+
+    @Override
+    protected void attachBaseContext(Context base) {
+        super.attachBaseContext(Api.updateBaseContextLocale(base));
+    }
+
+
 }
