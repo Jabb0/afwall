@@ -48,6 +48,7 @@ import dev.ukanth.ufirewall.R;
 import dev.ukanth.ufirewall.log.Log;
 import dev.ukanth.ufirewall.service.RootCommand;
 import dev.ukanth.ufirewall.util.G;
+import dev.ukanth.ufirewall.util.SecurityUtil;
 
 public class RulesActivity extends DataDumpActivity {
 
@@ -63,8 +64,21 @@ public class RulesActivity extends DataDumpActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setTitle(getString(R.string.showrules_title));
+
+        //coming from shortcut
+        Bundle bundle = getIntent().getExtras();
+        if (bundle != null) {
+            Object data = bundle.get("validate");
+            if (data != null) {
+                String check = (String) data;
+                if (check.equals("yes")) {
+                   new SecurityUtil( RulesActivity.this).passCheck();
+                }
+            }
+        }
         //sdDumpFile = "rules.log";
     }
+
 
     protected void populateMenu(SubMenu sub) {
         if (G.enableIPv6()) {
@@ -124,7 +138,8 @@ public class RulesActivity extends DataDumpActivity {
     }
 
     protected String getSuInfo(PackageManager pm) {
-        String suPackages[] = {"com.koushikdutta.superuser",
+        String suPackages[] = {
+                "com.koushikdutta.superuser",
                 "com.noshufou.android.su",
                 "com.noshufou.android.su.elite",
                 "com.koushikdutta.superuser",
@@ -137,7 +152,8 @@ public class RulesActivity extends DataDumpActivity {
                 "com.m0narx.su",
                 "com.miui.uac",
                 "eu.chainfire.supersu",
-                "eu.chainfire.supersu.pro"
+                "eu.chainfire.supersu.pro",
+                "com.topjohnwu.magisk"
         };
         String found = "none found";
 
@@ -157,7 +173,7 @@ public class RulesActivity extends DataDumpActivity {
         // Fourth section: "System info"
         writeHeading(result, true, "System info");
 
-        InterfaceDetails cfg = InterfaceTracker.getCurrentCfg(ctx);
+        InterfaceDetails cfg = InterfaceTracker.getCurrentCfg(ctx, false);
 
         result.append("Android version: " + android.os.Build.VERSION.RELEASE + "\n");
         result.append("Manufacturer: " + android.os.Build.MANUFACTURER + "\n");
@@ -184,6 +200,7 @@ public class RulesActivity extends DataDumpActivity {
 
                 ret.append(getFileInfo("/system/bin/su"));
                 ret.append(getFileInfo("/system/xbin/su"));
+                ret.append(getFileInfo("/data/magisk/magisk"));
                 ret.append(getFileInfo("/system/app/Superuser.apk"));
 
                 PackageManager pm = ctx.getPackageManager();
@@ -280,11 +297,7 @@ public class RulesActivity extends DataDumpActivity {
                     ver = "???";
                 }
                 String body = dataText + "\n\n" + getString(R.string.enter_problem) + "\n\n";
-            /*String uriText = "mailto:afwall-report@googlegroups.com?subject=" +
-                    Uri.encode("AFWall+ problem report - v" + ver) + "&body=" +
-    				Uri.encode(body);*/
                 final Intent emailIntent = new Intent(android.content.Intent.ACTION_SEND);
-                //email.setData(Uri.parse(uriText));
 
                 emailIntent.setType("plain/text");
                 emailIntent.putExtra(android.content.Intent.EXTRA_EMAIL, new String[]{"afwall-report@googlegroups.com"});
@@ -333,4 +346,6 @@ public class RulesActivity extends DataDumpActivity {
                 })
                 .show();
     }
+
+
 }

@@ -21,6 +21,14 @@
             android:summary="@string/showlog_toasts"
             android:title="@string/enable_show_toasts" />
 
+        <CheckBoxPreference
+            android:defaultValue="false"
+            android:dependency="enableLogService"
+            android:enabled="false"
+            android:key="showHostName"
+            android:summary="@string/showhost_desc"
+            android:title="@string/show_host" />
+
         <ListPreference
             android:defaultValue="OS"
             android:dependency="enableLogService"
@@ -39,11 +47,11 @@
 
         <EditTextPreference
             android:dependency="enableLogService"
-            android:inputType="number"
-            android:title="@string/pingDelayTitle"
-            android:dialogTitle="Ping timeout (seconds)"
             android:dialogMessage="Default - 10s"
-            android:key="logPingTime"/>
+            android:dialogTitle="Ping timeout (seconds)"
+            android:inputType="number"
+            android:key="logPingTime"
+            android:title="@string/pingDelayTitle" />
 
         <Preference
             android:key="block_filter"

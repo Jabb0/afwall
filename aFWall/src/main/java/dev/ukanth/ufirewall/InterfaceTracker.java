@@ -22,18 +22,10 @@
 
 package dev.ukanth.ufirewall;
 
-import android.annotation.TargetApi;
-import android.app.Notification;
-import android.app.NotificationManager;
-import android.app.PendingIntent;
 import android.content.Context;
-import android.content.Intent;
 import android.net.ConnectivityManager;
 import android.net.NetworkInfo;
 import android.net.wifi.WifiManager;
-import android.os.Build;
-import android.support.v4.app.NotificationCompat;
-import android.support.v4.app.TaskStackBuilder;
 
 import java.lang.reflect.Method;
 import java.net.Inet4Address;
@@ -66,62 +58,11 @@ public final class InterfaceTracker {
     public static final String BOOT_COMPLETED = "BOOT_COMPLETED";
     public static final String CONNECTIVITY_CHANGE = "CONNECTIVITY_CHANGE";
 
-    public static final int ERROR_NOTIFICATION_ID = 1;
 
-    public static long LAST_APPLIED_TIMESTAMP;
-
-    private static final int NOTIF_ID = 10221;
     private static InterfaceDetails currentCfg = null;
 
     private static String truncAfter(String in, String regexp) {
         return in.split(regexp)[0];
-    }
-
-    private static class NewInterfaceScanner {
-
-        public static void populateLanMasks(InterfaceDetails ret) {
-            try {
-                Enumeration<NetworkInterface> en = NetworkInterface.getNetworkInterfaces();
-
-                while (en.hasMoreElements()) {
-                    NetworkInterface intf = en.nextElement();
-                    boolean match = false;
-
-                    if (!intf.isUp() || intf.isLoopback()) {
-                        continue;
-                    }
-
-                    for (String pattern : ITFS_WIFI) {
-                        if (intf.getName().startsWith(truncAfter(pattern, "\\+"))) {
-                            match = true;
-                            break;
-                        }
-                    }
-                    if (!match)
-                        continue;
-                    ret.wifiName = intf.getName();
-
-                    Iterator<InterfaceAddress> addrList = intf.getInterfaceAddresses().iterator();
-                    while (addrList.hasNext()) {
-                        InterfaceAddress addr = addrList.next();
-                        InetAddress ip = addr.getAddress();
-                        String mask = truncAfter(ip.getHostAddress(), "%") + "/" +
-                                addr.getNetworkPrefixLength();
-
-                        if (ip instanceof Inet4Address) {
-                            ret.lanMaskV4 = mask;
-                        } else if (ip instanceof Inet6Address) {
-                            ret.lanMaskV6 = mask;
-                        }
-                    }
-                    if (ret.lanMaskV4.equals("") && ret.lanMaskV6.equals("")) {
-                        ret.noIP = true;
-                    }
-                }
-            } catch (Exception e) {
-                Log.i(TAG, "Error fetching network interface list: " + android.util.Log.getStackTraceString(e));
-            }
-        }
     }
 
     private static void getTetherStatus(Context context, InterfaceDetails d) {
@@ -191,6 +132,8 @@ public final class InterfaceTracker {
         if (currentCfg != null && currentCfg.equals(newCfg)) {
             return false;
         }
+        Log.i(TAG, "Getting interface details...");
+
         currentCfg = newCfg;
 
         if (!newCfg.netEnabled) {
@@ -217,34 +160,11 @@ public final class InterfaceTracker {
         return true;
     }
 
-    public static InterfaceDetails getCurrentCfg(Context context) {
-        if (currentCfg == null) {
+    public static InterfaceDetails getCurrentCfg(Context context, boolean force) {
+        if (currentCfg == null || force) {
             currentCfg = getInterfaceDetails(context);
         }
         return currentCfg;
-    }
-
-    @TargetApi(Build.VERSION_CODES.JELLY_BEAN)
-    private static void errorNotification(Context ctx) {
-        NotificationManager mNotificationManager =
-                (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
-
-        mNotificationManager.cancel(NOTIF_ID);
-        // Artificial stack so that navigating backward leads back to the Home screen
-        TaskStackBuilder stackBuilder = TaskStackBuilder.create(ctx)
-                .addParentStack(MainActivity.class)
-                .addNextIntent(new Intent(ctx, MainActivity.class));
-
-        Notification notification = new NotificationCompat.Builder(ctx)
-                .setContentTitle(ctx.getString(R.string.error_notification_title))
-                .setContentText(ctx.getString(R.string.error_notification_text))
-                .setTicker(ctx.getString(R.string.error_notification_ticker))
-                .setSmallIcon(R.drawable.notification_warn)
-                .setAutoCancel(true)
-                .setContentIntent(stackBuilder.getPendingIntent(0, PendingIntent.FLAG_UPDATE_CURRENT))
-                .build();
-
-        mNotificationManager.notify(ERROR_NOTIFICATION_ID, notification);
     }
 
     public static void applyRulesOnChange(Context context, final String reason) {
@@ -259,7 +179,12 @@ public final class InterfaceTracker {
         // update Api.PREFS_NAME so we pick up the right profile
         // REVISIT: this can be removed once we're confident that G is in sync with profile changes
         G.reloadPrefs();
-        applyRules(reason);
+
+        if (reason.equals(InterfaceTracker.BOOT_COMPLETED)) {
+            applyBootRules(reason);
+        } else {
+            applyRules(reason);
+        }
     }
 
     public static void applyRules(final String reason) {
@@ -275,7 +200,7 @@ public final class InterfaceTracker {
                                         @Override
                                         public void cbFunc(RootCommand state) {
                                             if (state.exitCode != 0) {
-                                                errorNotification(ctx);
+                                                Api.errorNotification(ctx);
                                             }
                                         }
                                     }));
@@ -290,7 +215,7 @@ public final class InterfaceTracker {
                                                 Log.i(TAG, reason + ": applied rules at " + System.currentTimeMillis());
                                             } else {
                                                 Log.e(TAG, reason + ": applySavedIptablesRules() returned an error");
-                                                errorNotification(ctx);
+                                                Api.errorNotification(ctx);
                                             }
                                             Api.applyDefaultChains(ctx, new RootCommand()
                                                     .setFailureToast(R.string.error_apply)
@@ -298,7 +223,7 @@ public final class InterfaceTracker {
                                                         @Override
                                                         public void cbFunc(RootCommand state) {
                                                             if (state.exitCode != 0) {
-                                                                errorNotification(ctx);
+                                                                Api.errorNotification(ctx);
                                                             }
                                                         }
                                                     }));
@@ -307,5 +232,101 @@ public final class InterfaceTracker {
                         }
                     }
                 }));
+    }
+
+    public static void applyBootRules(final String reason) {
+        Api.applySavedIptablesRules(ctx, true, new RootCommand()
+                .setFailureToast(R.string.error_apply)
+                .setCallback(new RootCommand.Callback() {
+                    @Override
+                    public void cbFunc(RootCommand state) {
+                        if (state.exitCode == 0) {
+                            Log.i(TAG, reason + ": applied rules at " + System.currentTimeMillis());
+                            Api.applyDefaultChains(ctx, new RootCommand()
+                                    .setCallback(new RootCommand.Callback() {
+                                        @Override
+                                        public void cbFunc(RootCommand state) {
+                                            if (state.exitCode != 0) {
+                                                Api.errorNotification(ctx);
+                                            }
+                                        }
+                                    }));
+                        } else {
+                            //lets try applying all rules
+                            Api.setRulesUpToDate(false);
+                            Api.applySavedIptablesRules(ctx, true, new RootCommand()
+                                    .setCallback(new RootCommand.Callback() {
+                                        @Override
+                                        public void cbFunc(RootCommand state) {
+                                            if (state.exitCode == 0) {
+                                                Log.i(TAG, reason + ": applied rules at " + System.currentTimeMillis());
+                                            } else {
+                                                Log.e(TAG, reason + ": applySavedIptablesRules() returned an error");
+                                                Api.errorNotification(ctx);
+                                            }
+                                            Api.applyDefaultChains(ctx, new RootCommand()
+                                                    .setFailureToast(R.string.error_apply)
+                                                    .setCallback(new RootCommand.Callback() {
+                                                        @Override
+                                                        public void cbFunc(RootCommand state) {
+                                                            if (state.exitCode != 0) {
+                                                                Api.errorNotification(ctx);
+                                                            }
+                                                        }
+                                                    }));
+                                        }
+                                    }));
+                        }
+                    }
+                }));
+    }
+
+    private static class NewInterfaceScanner {
+
+        public static void populateLanMasks(InterfaceDetails ret) {
+            try {
+                Enumeration<NetworkInterface> en = NetworkInterface.getNetworkInterfaces();
+
+                while (en.hasMoreElements()) {
+                    NetworkInterface intf = en.nextElement();
+                    boolean match = false;
+
+                    if (!intf.isUp() || intf.isLoopback()) {
+                        continue;
+                    }
+
+                    for (String pattern : ITFS_WIFI) {
+                        if (intf.getName().startsWith(truncAfter(pattern, "\\+"))) {
+                            match = true;
+                            break;
+                        }
+                    }
+                    if (!match)
+                        continue;
+                    ret.wifiName = intf.getName();
+
+                    Iterator<InterfaceAddress> addrList = intf.getInterfaceAddresses().iterator();
+                    while (addrList.hasNext()) {
+                        InterfaceAddress addr = addrList.next();
+                        InetAddress ip = addr.getAddress();
+                        String mask = truncAfter(ip.getHostAddress(), "%") + "/" +
+                                addr.getNetworkPrefixLength();
+
+                        if (ip instanceof Inet4Address) {
+                            Log.i(TAG, "Found ipv4: " + mask );
+                            ret.lanMaskV4 = mask;
+                        } else if (ip instanceof Inet6Address) {
+                            Log.i(TAG, "Found ipv6: " + mask );
+                            ret.lanMaskV6 = mask;
+                        }
+                    }
+                    if (ret.lanMaskV4.equals("") && ret.lanMaskV6.equals("")) {
+                        ret.noIP = true;
+                    }
+                }
+            } catch (Exception e) {
+                Log.i(TAG, "Error fetching network interface list: " + android.util.Log.getStackTraceString(e));
+            }
+        }
     }
 }

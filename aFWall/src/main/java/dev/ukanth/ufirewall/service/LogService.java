@@ -22,9 +22,12 @@
 
 package dev.ukanth.ufirewall.service;
 
+import android.app.AlarmManager;
+import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
+import android.os.AsyncTask;
 import android.os.Binder;
 import android.os.Handler;
 import android.os.IBinder;
@@ -37,11 +40,10 @@ import android.widget.Toast;
 
 import com.raizlabs.android.dbflow.config.FlowConfig;
 import com.raizlabs.android.dbflow.config.FlowManager;
-import com.raizlabs.android.dbflow.structure.database.DatabaseWrapper;
-import com.raizlabs.android.dbflow.structure.database.transaction.ITransaction;
 
 import java.util.HashSet;
 import java.util.Set;
+import java.util.concurrent.RejectedExecutionException;
 
 import dev.ukanth.ufirewall.Api;
 import dev.ukanth.ufirewall.R;
@@ -53,19 +55,15 @@ import dev.ukanth.ufirewall.log.LogInfo;
 import dev.ukanth.ufirewall.log.LogRxEvent;
 import dev.ukanth.ufirewall.util.G;
 import eu.chainfire.libsuperuser.Shell;
-import eu.chainfire.libsuperuser.StreamGobbler;
-import io.reactivex.functions.Consumer;
+import io.reactivex.disposables.Disposable;
 
 public class LogService extends Service {
 
     public static final String TAG = "AFWall";
 
     public static String logPath;
-    private final IBinder mBinder = new Binder();
 
     private Shell.Interactive rootSession;
-    public static LogRxEvent logRx;
-
     static Handler handler;
 
     public static final int QUEUE_NUM = 40;
@@ -76,11 +74,12 @@ public class LogService extends Service {
     public static int toastDuration;
     public static int toastDefaultYOffset;
     public static int toastYOffset;
-    LogData data;
 
     private static Runnable showOnlyToastRunnable;
     private static CancelableRunnable showToastRunnable;
     private static View toastLayout;
+
+    private Disposable disposable;
 
     private static abstract class CancelableRunnable implements Runnable {
         public boolean cancel;
@@ -163,7 +162,7 @@ public class LogService extends Service {
             Log.i(TAG, "Restarting LogService");
             startLogService();
         }
-        return Service.START_STICKY;
+        return START_STICKY;
     }
 
 
@@ -172,17 +171,45 @@ public class LogService extends Service {
         startLogService();
     }
 
+    private static class LogTask extends AsyncTask<Void, Void, Void> {
+        private LogEvent event;
+
+        private LogTask(LogEvent event) {
+            this.event = event;
+        }
+
+        @Override
+        protected Void doInBackground(Void... voids) {
+            store(event.logInfo, event.ctx);
+            return null;
+        }
+
+        @Override
+        protected void onPostExecute(Void a) {
+            if (event != null && event.logInfo.uidString != null && event.logInfo.uidString.length() > 0) {
+                if (G.showLogToasts() && G.canShow(event.logInfo.uid)) {
+                    showToast(event.ctx, handler, event.logInfo.uidString, false);
+                }
+            }
+        }
+    }
+
     private void startLogService() {
-        LogRxEvent.subscribe((new Consumer<LogEvent>() {
-                    @Override
-                    public void accept(LogEvent event) throws Exception {
-                        if (event != null) {
-                            store(event.logInfo);
-                            if (event != null && event.logInfo.uidString != null && event.logInfo.uidString.length() > 0) {
-                                if (G.showLogToasts()) {
-                                    showToast(event.ctx, handler, event.logInfo.uidString, false);
+        if (disposable != null) {
+            disposable.dispose();
+        }
+        disposable = LogRxEvent.subscribe((event -> {
+                    if (event != null) {
+                        try {
+                            new Thread(() -> {
+                                store(event.logInfo, event.ctx);
+                                if (event != null && event.logInfo != null && event.logInfo.uidString != null && event.logInfo.uidString.length() > 0) {
+                                    if (G.showLogToasts() && G.canShow(event.logInfo.uid)) {
+                                        showToast(event.ctx, handler, event.logInfo.uidString, false);
+                                    }
                                 }
-                            }
+                            }).start();
+                        } catch (Exception e) {
                         }
                     }
                 })
@@ -222,32 +249,29 @@ public class LogService extends Service {
                 rootSession = new Shell.Builder()
                         .useSU()
                         .setMinimalLogging(true)
-                        .setOnSTDOUTLineListener(new StreamGobbler.OnLineListener() {
-                            @Override
-                            public void onLine(String line) {
-                                if (line != null && !line.isEmpty() && line.startsWith("PID=")) {
-                                    try {
-                                        String uid = line.split("=")[1];
-                                        if (uid != null) {
-                                            Set data = G.storedPid();
-                                            if (data == null || data.isEmpty()) {
-                                                data = new HashSet();
-                                                data.add(uid);
-                                                G.storedPid(data);
-                                            } else if (!data.contains(uid)) {
-                                                Set data2 = new HashSet();
-                                                data2.addAll(data);
-                                                data2.add(uid);
-                                                G.storedPid(data2);
-                                            }
+                        .setOnSTDOUTLineListener(line -> {
+                            if (line != null && !line.isEmpty() && line.startsWith("PID=")) {
+                                try {
+                                    String uid = line.split("=")[1];
+                                    if (uid != null) {
+                                        Set data = G.storedPid();
+                                        if (data == null || data.isEmpty()) {
+                                            data = new HashSet();
+                                            data.add(uid);
+                                            G.storedPid(data);
+                                        } else if (!data.contains(uid)) {
+                                            Set data2 = new HashSet();
+                                            data2.addAll(data);
+                                            data2.add(uid);
+                                            G.storedPid(data2);
                                         }
-                                    } catch (Exception e) {
                                     }
-                                } else {
-                                    storeLogInfo(line, getApplicationContext());
+                                } catch (Exception e) {
                                 }
-
+                            } else {
+                                storeLogInfo(line, getApplicationContext());
                             }
+
                         }).addCommand(logPath).open();
             } else {
                 Log.i(TAG, "Unable to start log service. LogTarget is empty");
@@ -274,59 +298,83 @@ public class LogService extends Service {
     }
 
 
+    /* private static class Task extends AsyncTask<Void, Void, LogInfo> {
+         private Context context;
+         private String line;
+
+         private Task(Context context, String line) {
+             this.context = context;
+             this.line = line;
+         }
+
+         @Override
+         protected LogInfo doInBackground(Void... voids) {
+             return LogInfo.parseLogs(line, context);
+         }
+
+         @Override
+         protected void onPostExecute(LogInfo a) {
+             if (a != null) {
+                 LogRxEvent.publish(new LogEvent(a, context));
+             }
+         }
+     }
+ */
     private void storeLogInfo(String line, Context context) {
         if (G.enableLogService()) {
             if (line != null && line.trim().length() > 0) {
-                if (line.contains("AFL")) {
-                    //bus.post(new LogEvent(LogInfo.parseLogs(line, context), context));
-                    LogRxEvent.publish(new LogEvent(LogInfo.parseLogs(line, context), context));
-                }
+                if (line.contains("{AFL}")) {
+                    try {
+                        new Thread(() -> {
+                            LogRxEvent.publish(new LogEvent(LogInfo.parseLogs(line, context, "{AFL}", 0), context));
+                        }).start();
+                    } catch (RejectedExecutionException e) {
+                        //Handle when has exception thrown
+                    }
+                } /*else if (line.contains("{AFL-ALLOW}")) {
+                    try {
+                        new Thread(() -> {
+                            LogRxEvent.publish(new LogEvent(LogInfo.parseLogs(line, context, "{AFL-ALLOW}", 1), context));
+                        }).start();
+                    } catch (RejectedExecutionException e) {
+                        //Handle when has exception thrown
+                    }
+                }*/
             }
         }
     }
 
-    //@Subscribe
-   /* public void showMessageToast(LogEvent event) {
-
-        if (event != null && event.logInfo.uidString != null && event.logInfo.uidString.length() > 0) {
-            if (G.showLogToasts()) {
-                showToast(event.ctx, handler, event.logInfo.uidString, false);
-            }
-        }
-    }*/
-
-    // @Subscribe
-   /* public void storeDataToDB(LogEvent event) {
-        if (event != null) {
-            store(event.logInfo);
-        }
-    }*/
-
-    private void store(final LogInfo logInfo) {
+    private static void store(final LogInfo logInfo, Context context) {
         try {
-            data = new LogData();
-            data.setDst(logInfo.dst);
-            data.setOut(logInfo.out);
-            data.setSrc(logInfo.src);
-            data.setDpt(logInfo.dpt);
-            data.setIn(logInfo.in);
-            data.setLen(logInfo.len);
-            data.setProto(logInfo.proto);
-            data.setTimestamp(System.currentTimeMillis());
-            data.setSpt(logInfo.spt);
-            data.setUid(logInfo.uid);
-            data.setAppName(logInfo.appName);
-            FlowManager.getDatabase(LogDatabase.class).beginTransactionAsync(new ITransaction() {
-                @Override
-                public void execute(DatabaseWrapper databaseWrapper) {
-                    data.save(databaseWrapper);
+            if (logInfo != null) {
+                LogData data = new LogData();
+                data.setDst(logInfo.dst);
+                data.setOut(logInfo.out);
+                data.setSrc(logInfo.src);
+                data.setDpt(logInfo.dpt);
+                data.setIn(logInfo.in);
+                data.setLen(logInfo.len);
+                data.setProto(logInfo.proto);
+                data.setTimestamp(System.currentTimeMillis());
+                data.setSpt(logInfo.spt);
+                data.setUid(logInfo.uid);
+                data.setAppName(logInfo.appName);
+                data.setType(logInfo.type);
+                if (G.isDoKey(context) || G.isDonate()) {
+                    try {
+                        data.setHostname(logInfo.host != null ? logInfo.host : "");
+                    } catch (Exception e) {
+                    }
                 }
-            }).build().execute();
+                data.setType(0);
+                FlowManager.getDatabase(LogDatabase.class).beginTransactionAsync(databaseWrapper ->
+                        data.save(databaseWrapper)).build().execute();
+            }
         } catch (IllegalStateException e) {
             if (e.getMessage().contains("connection pool has been closed")) {
                 //reconnect logic
                 try {
-                    FlowManager.init(new FlowConfig.Builder(this).build());
+                    FlowManager.init(new FlowConfig.Builder(context).build());
                 } catch (Exception de) {
                     Log.i(TAG, "Exception while saving log data:" + e.getLocalizedMessage());
                 }
@@ -341,6 +389,26 @@ public class LogService extends Service {
     @Override
     public void onDestroy() {
         closeSession();
+        if (disposable != null) {
+            disposable.dispose();
+        }
         super.onDestroy();
     }
+
+    @Override
+    public void onTaskRemoved(Intent rootIntent) {
+        super.onTaskRemoved(rootIntent);
+        Log.d(TAG, "Log service removed");
+
+        PendingIntent service = PendingIntent.getService(
+                getApplicationContext(),
+                1001,
+                new Intent(getApplicationContext(), LogService.class),
+                PendingIntent.FLAG_ONE_SHOT);
+
+        AlarmManager alarmManager = (AlarmManager) getSystemService(Context.ALARM_SERVICE);
+        alarmManager.set(AlarmManager.ELAPSED_REALTIME_WAKEUP, 1000, service);
+    }
+
+
 }

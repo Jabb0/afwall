@@ -1,7 +1,99 @@
 Changelog AFWall+
 ==================
 
-Version 2.9.7 - BETA - 28-OCT-2017
+Version 3.1.0
+
+
+* Performance: Ipv4 and ipv6 rules apply time reduced by half
+* Ipv6 is enabled by default - Disable if not(under preferences->rules).
+* Fix: Tasker plugin issue after profile migration
+* Fix: Widget crashing issue
+* Fix: New app notification issue
+* Fix: Device boot rules issue
+* Fix: Duplicate app issue on oneplus devices 
+* Fix: Tor related bug
+* Fix: Xposed module unable to download allowed apps.
+
+Version 3.0.4
+* Fix: domain names resolve
+* Fix: Removed notification dot on all notifications
+* Fix: Inbound option causing firewall disable functionality
+* Fix: Hang issue on log detail when ping/resolve
+* Removed SUPER_USER permission which is not relevant anymore
+
+Version 3.0.3
+
+* Fix: Disable firewall issue
+* Fix: Traffic stats always zero in app details
+* Rewritten filter logic for main screen apps.
+* Xposed plugin not able to read preference.
+
+
+Version 3.0.2
+* Fix: Issue with Pixel C devices
+* Support for Magisk 18.0 and startup leak
+* Fix: Notification sound issue on some devices
+* Fix: Duplicate name appears on main screen
+
+
+Version 3.0.1
+
+* Fix: Status toggle widget 1x1 
+* Fix: Ability to hide ongoing notification (Stop firewall and restart to hide after disable it in preferences)
+* Fix: Firewall error notification on oreo and above
+* Security: Tile toggle checks for password
+* User reported crashes
+* Updated translations   
+
+Version 3.0.0
+
+Features:
+* Better support for nougat/oreo and pie
+* Firewall toggle tile
+* Adaptive Icons
+* Notification channels
+* Tor support
+Bugs:
+* Language selection bug
+* Filter selection bug
+* Compatible with magisk 17.x
+* Better handling of background process
+* Drops support for 4.x devices
+* Update languages
+* Updated libraries
+
+Version 2.9.9
+
+* Support for dual apps (experimental)
+* DNS Hostname option on log toast(donate feature)
+* Multiple memory leaks across screens.
+* Block log notification now moved under individual app detail screen
+* Enabled log cache for faster load.
+* Widgets now ask for password if enabled (except status widget)
+
+Bugs:
+* Shortcut open rules & preference screen without password.
+* fingerprint related issues
+* selinux deny for startup script
+* User reported crash fixes.
+* Updated string translations
+* Added default system language option.
+* Log notification name issue
+
+Version 2.9.8
+
+* Option to disable notification when applying rules - Recommended to turn on !
+* Added magisk related information in the error report
+* Fixed storage permission on export from rules
+* Pixel 2 bug on netfilter error on start
+* Rare preference crash on some devices
+* Upgraded runtime to Java 8
+* Updated support libraries
+* Fixed crashes upon loading
+* Fixed user reported bugs
+* Removed buggy quick apply -- Sincere Apologies! will add it after testing with various usecases
+
+Version 2.9.7 
 
 Features:
 * Control default chains for ipv4 and ipv6(preference)

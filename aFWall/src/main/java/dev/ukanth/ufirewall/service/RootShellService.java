@@ -22,11 +22,14 @@
 
 package dev.ukanth.ufirewall.service;
 
+import android.app.Notification;
+import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
+import android.os.Build;
 import android.os.IBinder;
 import android.support.annotation.Nullable;
 import android.support.v4.app.NotificationCompat;
@@ -45,6 +48,7 @@ import dev.ukanth.ufirewall.Api;
 import dev.ukanth.ufirewall.MainActivity;
 import dev.ukanth.ufirewall.R;
 import dev.ukanth.ufirewall.log.Log;
+import dev.ukanth.ufirewall.util.G;
 import eu.chainfire.libsuperuser.Debug;
 import eu.chainfire.libsuperuser.Shell;
 
@@ -54,33 +58,18 @@ import static dev.ukanth.ufirewall.service.RootShellService.ShellState.INIT;
 public class RootShellService extends Service {
 
     public static final String TAG = "AFWall";
-
+    public static final int NOTIFICATION_ID = 33347;
+    public static final int EXIT_NO_ROOT_ACCESS = -1;
+    public static final int NO_TOAST = -1;
     /* write command completion times to logcat */
     private static final boolean enableProfiling = false;
-
+    //number of retries - increase the count
+    private final static int MAX_RETRIES = 10;
     private static Shell.Interactive rootSession;
     private static Context mContext;
     private static NotificationManager notificationManager;
-    public static final int NOTIFICATION_ID = 33347;
-
-    public enum ShellState {
-        INIT,
-        READY,
-        BUSY,
-        FAIL
-    }
-
     private static ShellState rootState = INIT;
-
-    //number of retries
-    private final static int MAX_RETRIES = 5;
-
     private static LinkedList<RootCommand> waitQueue = new LinkedList<RootCommand>();
-
-    public final static int EXIT_NO_ROOT_ACCESS = -1;
-
-    public final static int NO_TOAST = -1;
-
     private static NotificationCompat.Builder builder;
 
     private static void complete(final RootCommand state, int exitCode) {
@@ -105,19 +94,6 @@ public class RootShellService extends Service {
         }
     }
 
-
-    @Override
-    public int onStartCommand(Intent intent, int flags, int startId) {
-        if (intent == null) { // if crash restart...
-            Log.i(TAG, "Restarting RootShell...");
-            List<String> cmds = new ArrayList<String>();
-            cmds.add("true");
-            new RootCommand().setFailureToast(R.string.error_su)
-                    .setReopenShell(true).run(getApplicationContext(), cmds);
-        }
-        return Service.START_STICKY;
-    }
-
     private static void runNextSubmission() {
 
         do {
@@ -132,28 +108,36 @@ public class RootShellService extends Service {
                 break;
             }
 
-            Log.i(TAG, "Start processing next state");
-            if (enableProfiling) {
-                state.startTime = new Date();
+            if (state != null) {
+                Log.i(TAG, "Start processing next state");
+                if (enableProfiling) {
+                    state.startTime = new Date();
+                }
+
+                if (rootState == ShellState.FAIL) {
+                    // if we don't have root, abort all queued commands
+                    complete(state, EXIT_NO_ROOT_ACCESS);
+                    continue;
+                } else if (rootState == ShellState.READY) {
+                    //Log.i(TAG, "Total commamds: #" + state.getCommmands().size());
+                    rootState = ShellState.BUSY;
+                    if (G.isRun()) {
+                        createNotification(mContext);
+                    }
+                    processCommands(state);
+                }
             }
 
-            if (rootState == ShellState.FAIL) {
-                // if we don't have root, abort all queued commands
-                complete(state, EXIT_NO_ROOT_ACCESS);
-                continue;
-            } else if (rootState == ShellState.READY) {
-                Log.i(TAG, "Total commamds: #" + state.getCommmands().size());
-                rootState = ShellState.BUSY;
-                createNotification(mContext);
-                processCommands(state);
-            }
+
         } while (false);
     }
 
     private static void processCommands(final RootCommand state) {
         if (state.commandIndex < state.getCommmands().size() && state.getCommmands().get(state.commandIndex) != null) {
             String command = state.getCommmands().get(state.commandIndex);
-            sendUpdate(state);
+            if(!state.isv6) {
+                sendUpdate(state);
+            }
             if (command != null) {
                 state.ignoreExitCode = false;
 
@@ -164,50 +148,47 @@ public class RootShellService extends Service {
                 state.lastCommand = command;
                 state.lastCommandResult = new StringBuilder();
                 try {
-                    rootSession.addCommand(command, 0, new Shell.OnCommandResultListener() {
-                        @Override
-                        public void onCommandResult(int commandCode, int exitCode,
-                                                    List<String> output) {
-                            if (output != null) {
-                                ListIterator<String> iter = output.listIterator();
-                                while (iter.hasNext()) {
-                                    String line = iter.next();
-                                    if (line != null && !line.equals("")) {
-                                        if (state.res != null) {
-                                            state.res.append(line + "\n");
-                                        }
-                                        state.lastCommandResult.append(line + "\n");
+                    rootSession.addCommand(command, 0, (commandCode, exitCode, output) -> {
+                        if (output != null) {
+                            ListIterator<String> iter = output.listIterator();
+                            while (iter.hasNext()) {
+                                String line = iter.next();
+                                if (line != null && !line.equals("")) {
+                                    if (state.res != null) {
+                                        state.res.append(line + "\n");
                                     }
+                                    state.lastCommandResult.append(line + "\n");
                                 }
                             }
-                            if (exitCode >= 0 && exitCode == state.retryExitCode && state.retryCount < MAX_RETRIES) {
-                                state.retryCount++;
-                                Log.d(TAG, "command '" + state.lastCommand + "' exited with status " + exitCode +
-                                        ", retrying (attempt " + state.retryCount + "/" + MAX_RETRIES + ")");
-                                processCommands(state);
-                                return;
-                            }
+                        }
+                        if (exitCode >= 0 && exitCode == state.retryExitCode && state.retryCount < MAX_RETRIES) {
+                            //lets wait for few ms before trying ?
+                            state.retryCount++;
+                            Log.d(TAG, "command '" + state.lastCommand + "' exited with status " + exitCode +
+                                    ", retrying (attempt " + state.retryCount + "/" + MAX_RETRIES + ")");
+                            processCommands(state);
+                            return;
+                        }
 
-                            state.commandIndex++;
-                            state.retryCount = 0;
+                        state.commandIndex++;
+                        state.retryCount = 0;
 
-                            boolean errorExit = exitCode != 0 && !state.ignoreExitCode;
-                            if (state.commandIndex >= state.getCommmands().size() || errorExit) {
-                                complete(state, exitCode);
-                                if (exitCode < 0) {
-                                    rootState = ShellState.FAIL;
-                                    Log.e(TAG, "libsuperuser error " + exitCode + " on command '" + state.lastCommand + "'");
-                                } else {
-                                    if (errorExit) {
-                                        Log.i(TAG, "command '" + state.lastCommand + "' exited with status " + exitCode +
-                                                "\nOutput:\n" + state.lastCommandResult);
-                                    }
-                                    rootState = ShellState.READY;
-                                }
-                                runNextSubmission();
+                        boolean errorExit = exitCode != 0 && !state.ignoreExitCode;
+                        if (state.commandIndex >= state.getCommmands().size() || errorExit) {
+                            complete(state, exitCode);
+                            if (exitCode < 0) {
+                                rootState = ShellState.FAIL;
+                                Log.e(TAG, "libsuperuser error " + exitCode + " on command '" + state.lastCommand + "'");
                             } else {
-                                processCommands(state);
+                                if (errorExit) {
+                                    Log.i(TAG, "command '" + state.lastCommand + "' exited with status " + exitCode +
+                                            "\nOutput:\n" + state.lastCommandResult);
+                                }
+                                rootState = ShellState.READY;
                             }
+                            runNextSubmission();
+                        } else {
+                            processCommands(state);
                         }
                     });
                 } catch (NullPointerException | ArrayIndexOutOfBoundsException e) {
@@ -220,24 +201,79 @@ public class RootShellService extends Service {
     }
 
     private static void sendUpdate(final RootCommand state) {
-        new Thread(new Runnable() {
-            @Override
-            public void run() {
-                Intent broadcastIntent = new Intent();
-                broadcastIntent.setAction("UPDATEUI");
-                broadcastIntent.putExtra("SIZE", state.getCommmands().size());
-                broadcastIntent.putExtra("INDEX", state.commandIndex);
-                mContext.sendBroadcast(broadcastIntent);
-
-               /* if (builder != null) {
-                    builder.setProgress(state.getCommmands().size(), state.commandIndex, false);
-                    notificationManager.notify(NOTIFICATION_ID, builder.build());
-                }*/
-            }
+        new Thread(() -> {
+            Intent broadcastIntent = new Intent();
+            broadcastIntent.setAction("UPDATEUI");
+            broadcastIntent.putExtra("SIZE", state.getCommmands().size());
+            broadcastIntent.putExtra("INDEX", state.commandIndex);
+            mContext.sendBroadcast(broadcastIntent);
         }).start();
     }
 
-    private static void setupLogging() {
+    private static void createNotification(Context context) {
+
+        String CHANNEL_ID = "firewall.apply";
+        notificationManager = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+        builder = new NotificationCompat.Builder(context, CHANNEL_ID);
+
+        Intent appIntent = new Intent(context, MainActivity.class);
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            /* Create or update. */
+            NotificationChannel channel = new NotificationChannel(CHANNEL_ID, context.getString(R.string.runNotification),
+                    NotificationManager.IMPORTANCE_LOW);
+            channel.setDescription("");
+            channel.setShowBadge(false);
+            channel.setSound(null, null);
+            channel.enableLights(false);
+            channel.enableVibration(false);
+            notificationManager.createNotificationChannel(channel);
+        }
+
+        TaskStackBuilder stackBuilder = TaskStackBuilder.create(context);
+        stackBuilder.addParentStack(MainActivity.class);
+        stackBuilder.addNextIntent(appIntent);
+        PendingIntent resultPendingIntent = stackBuilder.getPendingIntent(0, PendingIntent.FLAG_UPDATE_CURRENT);
+        builder.setContentIntent(resultPendingIntent);
+
+
+        int notifyType = G.getNotificationPriority();
+
+        Notification notification = builder.setSmallIcon(R.drawable.ic_apply_notification)
+                .setAutoCancel(false)
+                .setContentTitle(context.getString(R.string.applying_rules))
+                .setTicker(context.getString(R.string.app_name))
+                .setChannelId(CHANNEL_ID)
+                .setCategory(Notification.CATEGORY_STATUS)
+                .setVisibility(Notification.VISIBILITY_SECRET)
+                .setOnlyAlertOnce(true)
+                .setPriority(NotificationManager.IMPORTANCE_LOW)
+                .setContentText("").build();
+        switch (notifyType) {
+            case 0:
+                notification.priority = NotificationCompat.PRIORITY_LOW;
+                break;
+            case 1:
+                notification.priority = NotificationCompat.PRIORITY_MIN;
+                break;
+        }
+        builder.setProgress(0, 0, true);
+        notificationManager.notify(NOTIFICATION_ID, notification);
+    }
+
+    @Override
+    public int onStartCommand(Intent intent, int flags, int startId) {
+        if (intent == null) { // if crash restart...
+            Log.i(TAG, "Restarting RootShell...");
+            List<String> cmds = new ArrayList<String>();
+            cmds.add("true");
+            new RootCommand().setFailureToast(R.string.error_su)
+                    .setReopenShell(true).run(getApplicationContext(), cmds);
+        }
+        return Service.START_STICKY;
+    }
+
+    private void setupLogging() {
         Debug.setDebug(false);
         Debug.setLogTypeEnabled(Debug.LOG_ALL, false);
         Debug.setLogTypeEnabled(Debug.LOG_GENERAL, false);
@@ -251,32 +287,31 @@ public class RootShellService extends Service {
     }
 
 
-    private static void startShellInBackground() {
+    private void startShellInBackground() {
         Log.d(TAG, "Starting root shell...");
         setupLogging();
         //start only rootSession is null
         if (rootSession == null) {
+
             rootSession = new Shell.Builder().
                     useSU().
                     setWantSTDERR(true).
                     setWatchdogTimeout(5).
-                    open(new Shell.OnCommandResultListener() {
-                        public void onCommandResult(int commandCode, int exitCode, List<String> output) {
-                            if (exitCode < 0) {
-                                Log.e(TAG, "Can't open root shell: exitCode " + exitCode);
-                                rootState = ShellState.FAIL;
-                            } else {
-                                Log.d(TAG, "Root shell is open");
-                                rootState = ShellState.READY;
-                            }
-                            runNextSubmission();
+                    open((commandCode, exitCode, output) -> {
+                        if (exitCode < 0) {
+                            Log.e(TAG, "Can't open root shell: exitCode " + exitCode);
+                            rootState = ShellState.FAIL;
+                        } else {
+                            Log.d(TAG, "Root shell is open");
+                            rootState = ShellState.READY;
                         }
+                        runNextSubmission();
                     });
         }
 
     }
 
-    private static void reOpenShell(Context context) {
+    private void reOpenShell(Context context) {
         if (rootState == null || rootState != ShellState.READY || rootState == ShellState.FAIL) {
             if (notificationManager != null) {
                 notificationManager.cancel(NOTIFICATION_ID);
@@ -289,7 +324,7 @@ public class RootShellService extends Service {
     }
 
 
-    public static void runScriptAsRoot(Context ctx, List<String> cmds, RootCommand state, boolean useThreads) {
+    public void runScriptAsRoot(Context ctx, List<String> cmds, RootCommand state) {
         Log.i(TAG, "Received cmds: #" + cmds.size());
         state.setCommmands(cmds);
         state.commandIndex = 0;
@@ -298,7 +333,7 @@ public class RootShellService extends Service {
             mContext = ctx.getApplicationContext();
         }
         waitQueue.add(state);
-        if (rootState == ShellState.INIT || (rootState == ShellState.FAIL && state.reopenShell)) {
+        if (rootState == INIT || (rootState == ShellState.FAIL && state.reopenShell)) {
             reOpenShell(ctx);
         } else if (rootState != ShellState.BUSY) {
             runNextSubmission();
@@ -306,7 +341,7 @@ public class RootShellService extends Service {
             new Timer().schedule(new TimerTask() {
                 @Override
                 public void run() {
-                    Log.i(TAG, "State of rootShell" + rootState);
+                    Log.i(TAG, "State of rootShell: " + rootState);
                     if (rootState == ShellState.BUSY) {
                         //try resetting state to READY forcefully
                         Log.i(TAG, "Forcefully changing the state " + rootState);
@@ -324,25 +359,10 @@ public class RootShellService extends Service {
         return null;
     }
 
-    private static void createNotification(Context context) {
-
-        notificationManager = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
-        builder = new NotificationCompat.Builder(context);
-
-        Intent appIntent = new Intent(context, MainActivity.class);
-
-        TaskStackBuilder stackBuilder = TaskStackBuilder.create(context);
-        stackBuilder.addParentStack(MainActivity.class);
-        stackBuilder.addNextIntent(appIntent);
-        PendingIntent resultPendingIntent = stackBuilder.getPendingIntent(0, PendingIntent.FLAG_UPDATE_CURRENT);
-        builder.setContentIntent(resultPendingIntent);
-        builder.setSmallIcon(R.drawable.notification)
-                .setAutoCancel(false)
-                .setContentTitle(context.getString(R.string.applying_rules))
-                .setTicker(context.getString(R.string.app_name))
-                .setPriority(-2)
-                .setContentText("");
-        builder.setProgress(0, 0, true);
-        notificationManager.notify(NOTIFICATION_ID, builder.build());
+    public enum ShellState {
+        INIT,
+        READY,
+        BUSY,
+        FAIL
     }
 }

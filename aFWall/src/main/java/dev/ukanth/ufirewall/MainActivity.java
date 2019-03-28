@@ -27,33 +27,32 @@ package dev.ukanth.ufirewall;
 import android.Manifest;
 import android.app.KeyguardManager;
 import android.app.NotificationManager;
+import android.app.job.JobInfo;
+import android.app.job.JobScheduler;
 import android.content.ActivityNotFoundException;
 import android.content.BroadcastReceiver;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences.Editor;
-import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
-import android.content.res.ColorStateList;
 import android.content.res.Resources;
-import android.graphics.Color;
 import android.os.AsyncTask;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
+import android.os.PowerManager;
+import android.provider.Settings;
 import android.support.annotation.NonNull;
-import android.support.design.widget.FloatingActionButton;
 import android.support.v4.app.ActivityCompat;
-import android.support.v4.view.MenuItemCompat;
 import android.support.v4.widget.SwipeRefreshLayout;
 import android.support.v7.app.AlertDialog;
 import android.support.v7.app.AppCompatActivity;
 import android.support.v7.widget.Toolbar;
 import android.text.Editable;
-import android.text.InputType;
 import android.text.TextUtils.TruncateAt;
 import android.text.TextWatcher;
 import android.view.KeyEvent;
@@ -77,6 +76,7 @@ import android.widget.Toast;
 
 import com.afollestad.materialdialogs.DialogAction;
 import com.afollestad.materialdialogs.MaterialDialog;
+import com.raizlabs.android.dbflow.config.FlowManager;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -84,6 +84,8 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.TimeUnit;
 
 import dev.ukanth.ufirewall.Api.PackageInfoData;
 import dev.ukanth.ufirewall.activity.CustomScriptActivity;
@@ -92,26 +94,26 @@ import dev.ukanth.ufirewall.activity.LogActivity;
 import dev.ukanth.ufirewall.activity.OldLogActivity;
 import dev.ukanth.ufirewall.activity.RulesActivity;
 import dev.ukanth.ufirewall.log.Log;
+import dev.ukanth.ufirewall.log.LogPreference;
+import dev.ukanth.ufirewall.log.LogPreferenceDB;
 import dev.ukanth.ufirewall.preferences.PreferencesActivity;
 import dev.ukanth.ufirewall.profiles.ProfileData;
 import dev.ukanth.ufirewall.profiles.ProfileHelper;
+import dev.ukanth.ufirewall.service.FirewallService;
 import dev.ukanth.ufirewall.service.RootCommand;
 import dev.ukanth.ufirewall.util.AppListArrayAdapter;
 import dev.ukanth.ufirewall.util.FileDialog;
-import dev.ukanth.ufirewall.util.FingerprintUtil;
 import dev.ukanth.ufirewall.util.G;
 import dev.ukanth.ufirewall.util.ImportApi;
 import dev.ukanth.ufirewall.util.PackageComparator;
+import dev.ukanth.ufirewall.util.SecurityUtil;
 import eu.chainfire.libsuperuser.Shell;
-import haibison.android.lockpattern.LockPatternActivity;
 import haibison.android.lockpattern.utils.AlpSettings;
 
-import static dev.ukanth.ufirewall.util.G.TAG;
 import static dev.ukanth.ufirewall.util.G.ctx;
 import static dev.ukanth.ufirewall.util.G.isDonate;
-import static dev.ukanth.ufirewall.util.G.showQuickButton;
-import static haibison.android.lockpattern.LockPatternActivity.ACTION_COMPARE_PATTERN;
-import static haibison.android.lockpattern.LockPatternActivity.EXTRA_PATTERN;
+import static dev.ukanth.ufirewall.util.SecurityUtil.LOCK_VERIFICATION;
+import static dev.ukanth.ufirewall.util.SecurityUtil.REQ_ENTER_PATTERN;
 import static haibison.android.lockpattern.LockPatternActivity.RESULT_FAILED;
 import static haibison.android.lockpattern.LockPatternActivity.RESULT_FORGOT_PATTERN;
 
@@ -120,11 +122,19 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
         RadioGroup.OnCheckedChangeListener {
 
 
-    private Menu mainMenu;
-    private ListView listview = null;
+    private static final int SHOW_ABOUT_RESULT = 1200;
+    private static final int PREFERENCE_RESULT = 1205;
+    private static final int SHOW_CUSTOM_SCRIPT = 1201;
+    private static final int SHOW_RULES_ACTIVITY = 1202;
+    private static final int SHOW_LOGS_ACTIVITY = 1203;
+    private static final int VERIFY_CHECK = 10000;
+    private static final int MY_PERMISSIONS_REQUEST_WRITE_STORAGE = 1;
+    private static final int MY_PERMISSIONS_REQUEST_READ_STORAGE = 2;
+    private static final int MY_PERMISSIONS_REQUEST_WRITE_STORAGE_ASSET = 3;
     public static boolean dirty = false;
+    private static Menu mainMenu;
+    private ListView listview = null;
     private MaterialDialog plsWait;
-
     private ArrayAdapter<String> spinnerAdapter = null;
     private SwipeRefreshLayout mSwipeLayout;
     private int index;
@@ -132,36 +142,30 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
     private List<String> mlocalList = new ArrayList<>(new LinkedHashSet<String>());
     private int initDone = 0;
     private Spinner mSpinner;
-    private MaterialDialog progress;
-
-    private static final int REQ_ENTER_PATTERN = 9755;
-    private static final int SHOW_ABOUT_RESULT = 1200;
-    private static final int PREFERENCE_RESULT = 1205;
-    private static final int SHOW_CUSTOM_SCRIPT = 1201;
-    private static final int SHOW_RULES_ACTIVITY = 1202;
-    private static final int SHOW_LOGS_ACTIVITY = 1203;
-
-    private static final int LOCK_VERIFICATION = 1212;
-    private static final int VERIFY_CHECK = 10000;
-
-    private static final int MY_PERMISSIONS_REQUEST_WRITE_STORAGE = 1;
-    private static final int MY_PERMISSIONS_REQUEST_READ_STORAGE = 2;
-    private static final int MY_PERMISSIONS_REQUEST_WRITE_STORAGE_ASSET = 3;
-
-    public static FloatingActionButton getFab() {
-        return fab;
-    }
-
-    private static FloatingActionButton fab;
-
+    private MaterialDialog runProgress;
     private AlertDialog dialogLegend = null;
-
-    private static HashSet<PackageInfoData> queue;
 
     private BroadcastReceiver uiProgressReceiver;
     private BroadcastReceiver toastReceiver;
 
     private Shell.Interactive rootShell = null;
+    private TextWatcher filterTextWatcher = new TextWatcher() {
+
+        public void afterTextChanged(Editable s) {
+            showApplications(s.toString());
+        }
+
+
+        public void beforeTextChanged(CharSequence s, int start, int count,
+                                      int after) {
+        }
+
+        public void onTextChanged(CharSequence s, int start, int before,
+                                  int count) {
+            showApplications(s.toString());
+        }
+
+    };
 
     public boolean isDirty() {
         return dirty;
@@ -178,6 +182,11 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
+        /*if (LeakCanary.isInAnalyzerProcess(this)) {
+            return;
+        }
+        LeakCanary.install(G.getInstance());*/
 
         try {
             final int FLAG_HARDWARE_ACCELERATED = WindowManager.LayoutParams.class
@@ -210,17 +219,85 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
         mSwipeLayout = (SwipeRefreshLayout) findViewById(R.id.swipe_container);
         mSwipeLayout.setOnRefreshListener(this);
 
-        queue = new HashSet<>();
+        //queue = new HashSet<>();
 
         if (!G.hasRoot()) {
             (new RootCheck()).setContext(this).executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
         } else {
             startRootShell(rootShell);
-            passCheck();
+            new SecurityUtil(MainActivity.this).passCheck();
+            registerNetworkObserver();
         }
-        registerQuickApply();
+        //registerQuickApply();
         registerUIbroadcast();
         registerToastbroadcast();
+        migrateNotification();
+        //checkAndAskForBatteryOptimization();
+    }
+
+
+    private void registerNetworkObserver() {
+        startService(new Intent(getBaseContext(), FirewallService.class));
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        String action = intent.getAction();
+        if (action == null) {
+            return;
+        }
+    }
+
+    @Override
+    public void onBackPressed() {
+        super.onBackPressed();
+    }
+
+
+    private void checkAndAskForBatteryOptimization() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            PowerManager powerManager = (PowerManager) getApplicationContext().getSystemService(POWER_SERVICE);
+            if (!powerManager.isIgnoringBatteryOptimizations(getPackageName())) {
+                new MaterialDialog.Builder(MainActivity.this).cancelable(false)
+                        .title(R.string.battery_optimization_title)
+                        .content(R.string.battery_optimization_desc)
+                        .onPositive((dialog, which) -> {
+                            try {
+                                Intent intent = new Intent();
+                                intent.setAction(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
+                                startActivity(intent);
+                            } catch (ActivityNotFoundException e) {
+                                Toast.makeText(getApplicationContext(), "Unable to open battery optimisation screen. Please add it manually", Toast.LENGTH_LONG).show();
+                            }
+                        })
+                        .onNegative((dialog, which) -> {
+                            dialog.dismiss();
+                        })
+                        .positiveText(R.string.Continue)
+                        .negativeText(R.string.exit)
+                        .show();
+            }
+        }
+    }
+
+    private void migrateNotification() {
+        try {
+            if (!G.isNotificationMigrated()) {
+                List<Integer> idList = G.getBlockedNotifyList();
+                for (Integer uid : idList) {
+                    LogPreference preference = new LogPreference();
+                    preference.setUid(uid);
+                    preference.setTimestamp(System.currentTimeMillis());
+                    preference.setDisable(true);
+                    FlowManager.getDatabase(LogPreferenceDB.class).beginTransactionAsync(databaseWrapper -> preference.save(databaseWrapper)).build().execute();
+                }
+                G.isNotificationMigrated(true);
+            }
+        } catch (Exception e) {
+            Log.e(G.TAG, "Unable to migrate notification", e);
+        }
+
     }
 
     private void requestPermission() {
@@ -243,16 +320,16 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
         registerReceiver(toastReceiver, filter);
     }
 
-
     private void registerUIbroadcast() {
         IntentFilter filter = new IntentFilter("UPDATEUI");
+
         uiProgressReceiver = new BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent intent) {
-                if (progress != null) {
-                    progress.setContent(context.getString(R.string.applying) + " " + intent.getExtras().get("INDEX") + "/" + intent.getExtras().get("SIZE"));
+                String rules = G.enableIPv6() ? " (v4 & v6) " : " (v4) ";
+                if (runProgress != null) {
+                    runProgress.setContent(context.getString(R.string.applying) + rules + intent.getExtras().get("INDEX") + "/" + intent.getExtras().get("SIZE"));
                 }
-
             }
         };
         registerReceiver(uiProgressReceiver, filter);
@@ -262,7 +339,7 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
      * Register quick apply from main screen
      */
     private void registerQuickApply() {
-        fab = (FloatingActionButton) findViewById(R.id.fab);
+       /* fab = (FloatingActionButton) findViewById(R.id.fab);
         if (showQuickButton()) {
             fab.setVisibility(View.VISIBLE);
         } else {
@@ -274,19 +351,22 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
                 //lets save the rules
                 if (queue != null && !queue.isEmpty()) {
                     List<PackageInfoData> apps = new ArrayList<>(queue);
-                    for(PackageInfoData data: apps) {
+                    for (PackageInfoData data : apps) {
                         Log.i(TAG, data.pkgName + " " + data.uid);
                     }
-                    Api.RuleDataSet ruleData = Api.saveRules(getApplicationContext(), apps, false);
-                    Log.i(TAG, "Generated RuleIDs: " + ruleData.toString());
-                    new RunQuickApply().setDataSet(ruleData).executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
+                    Api.RuleDataSet existingRuleSet  = Api.getExistingRuleSet();
+                    Api.RuleDataSet ruleData = Api.generateRules(getApplicationContext(), apps, false);
+                    Api.RuleDataSet merged = Api.merge(existingRuleSet, ruleData);
+                    Log.i(TAG, "Generated RuleIDs: " + merged.toString());
+
+                    queue.clear();
+                    new RunQuickApply().setDataSet(merged).executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
                     //save the rules
-                    Api.saveRules(getApplicationContext(), Api.getApps(getApplicationContext(), null), true);
+                    Api.generateRules(getApplicationContext(),  Api.getApps(getApplicationContext(),null), true);
                 }
             }
-        });
+        });*/
     }
-
 
     @Override
     public void onRefresh() {
@@ -299,26 +379,88 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
 
     private void updateRadioFilter() {
         RadioGroup radioGroup = (RadioGroup) findViewById(R.id.appFilterGroup);
+        if (G.showFilter()) {
+            switch (G.selectedFilter()) {
+                case 0:
+                    radioGroup.check(R.id.rpkg_core);
+                    break;
+                case 1:
+                    radioGroup.check(R.id.rpkg_sys);
+                    break;
+                case 2:
+                    radioGroup.check(R.id.rpkg_user);
+                    break;
+                default:
+                    radioGroup.check(R.id.rpkg_all);
+                    break;
+            }
+        } else {
+            radioGroup.check(R.id.rpkg_all);
+        }
         radioGroup.setOnCheckedChangeListener(this);
     }
 
-
     private void selectFilterGroup() {
-        RadioGroup radioGroup = (RadioGroup) findViewById(R.id.appFilterGroup);
-        switch (radioGroup.getCheckedRadioButtonId()) {
-            case R.id.rpkg_core:
-                showApplications(null, 0, false);
-                break;
-            case R.id.rpkg_sys:
-                showApplications(null, 1, false);
-                break;
-            case R.id.rpkg_user:
-                showApplications(null, 2, false);
-                break;
-            default:
-                showApplications("", 99, true);
-                break;
+        if (G.showFilter()) {
+            RadioGroup radioGroup = (RadioGroup) findViewById(R.id.appFilterGroup);
+            switch (radioGroup.getCheckedRadioButtonId()) {
+                case R.id.rpkg_core:
+                    filterApps(2);
+                    break;
+                case R.id.rpkg_sys:
+                    filterApps(0);
+                    break;
+                case R.id.rpkg_user:
+                    filterApps(1);
+                    break;
+                default:
+                    filterApps(-1);
+                    break;
+            }
+        } else {
+            filterApps(-1);
         }
+
+    }
+
+    /**
+     * Filter application based on app tpe
+     *
+     * @param i
+     */
+    private void filterApps(int i) {
+        Set<PackageInfoData> returnList = new HashSet<>();
+        List<PackageInfoData> inputList;
+        List<PackageInfoData> allApps = Api.getApps(getApplicationContext(), null);
+        if (i >= 0) {
+            for (PackageInfoData infoData : allApps) {
+                if (infoData != null) {
+                    if (infoData.appType == i) {
+                        returnList.add(infoData);
+                    }
+                }
+            }
+            inputList = new ArrayList<>(returnList);
+        } else {
+            inputList = allApps;
+        }
+
+        try {
+            Collections.sort(inputList, new PackageComparator());
+        } catch (Exception e) {
+            Log.d(Api.TAG, "Exception in filter Sorting");
+        }
+
+        ArrayAdapter appAdapter = new AppListArrayAdapter(this, getApplicationContext(), inputList);
+        this.listview.setAdapter(appAdapter);
+        appAdapter.notifyDataSetChanged();
+        // restore
+        this.listview.setSelectionFromTop(index, top);
+    }
+
+    @Override
+    protected void onStop() {
+        super.onStop();
     }
 
     @Override
@@ -335,7 +477,7 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
     }
 
     private void startRootShell(Shell.Interactive rootShell) {
-        if(rootShell == null) {
+        if (rootShell == null) {
             List<String> cmds = new ArrayList<String>();
             cmds.add("true");
             new RootCommand().setFailureToast(R.string.error_su)
@@ -344,54 +486,50 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
                         public void cbFunc(RootCommand state) {
                             //failed to acquire root
                             if (state.exitCode != 0) {
-                                runOnUiThread(new Runnable() {
-                                    @Override
-                                    public void run() {
-                                        showRootNotFoundMessage();
-                                    }
+                                runOnUiThread(() -> {
+                                    disableFirewall();
+                                    showRootNotFoundMessage();
                                 });
-
                             }
                         }
                     }).run(getApplicationContext(), cmds);
         }
 
-        if (G.activeNotification()) {
+       /* if (G.activeNotification()) {
             Api.showNotification(Api.isEnabled(getApplicationContext()), getApplicationContext());
-        }
+        }*/
     }
 
     private void showRootNotFoundMessage() {
-        new MaterialDialog.Builder(MainActivity.this).cancelable(false)
-                .title(R.string.error_common)
-                .content(R.string.error_su)
-                .onPositive(new MaterialDialog.SingleButtonCallback() {
-                    @Override
-                    public void onClick(@NonNull MaterialDialog dialog, @NonNull DialogAction which) {
-                        dialog.dismiss();
-                    }
-                })
-                .onNegative(new MaterialDialog.SingleButtonCallback() {
-                    @Override
-                    public void onClick(@NonNull MaterialDialog dialog, @NonNull DialogAction which) {
-                        MainActivity.this.finish();
-                        android.os.Process.killProcess(android.os.Process.myPid());
-                        dialog.dismiss();
-                    }
-                })
-                .positiveText(R.string.Continue)
-                .negativeText(R.string.exit)
-                .show();
+        if (G.isActivityVisible()) {
+            try {
+                new MaterialDialog.Builder(this).cancelable(false)
+                        .title(R.string.error_common)
+                        .content(R.string.error_su)
+                        .onPositive((dialog, which) -> dialog.dismiss())
+                        .onNegative((dialog, which) -> {
+                            MainActivity.this.finish();
+                            android.os.Process.killProcess(android.os.Process.myPid());
+                            dialog.dismiss();
+                        })
+                        .positiveText(R.string.Continue)
+                        .negativeText(R.string.exit)
+                        .show();
+            } catch (Exception e) {
+                Api.toast(this, getString(R.string.error_su_toast), Toast.LENGTH_SHORT);
+            }
+        }
     }
 
     @Override
     public void onResume() {
         super.onResume();
-        if (showQuickButton()) {
+        /*if (showQuickButton()) {
             fab.setVisibility(View.VISIBLE);
         } else {
             fab.setVisibility(View.GONE);
-        }
+        }*/
+        G.activityResumed();
     }
 
     private void reloadPreferences() {
@@ -409,8 +547,9 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
         refreshHeader();
         updateIconStatus();
 
+        //make sure we cancel notification posted by app notification.
         NotificationManager mNotificationManager = (NotificationManager) this.getSystemService(Context.NOTIFICATION_SERVICE);
-        mNotificationManager.cancel(Api.NOTIFICATION_ID);
+        mNotificationManager.cancel(2);
 
         if (G.disableIcons()) {
             this.findViewById(R.id.imageHolder).setVisibility(View.GONE);
@@ -453,6 +592,12 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
         } else {
             hideColumns(R.id.img_lan);
         }
+        if (G.enableTor()) {
+            addColumns(R.id.img_tor);
+        } else {
+            hideColumns(R.id.img_tor);
+        }
+
 
         updateRadioFilter();
 
@@ -472,16 +617,20 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
     public void onCheckedChanged(RadioGroup group, int checkedId) {
         switch (checkedId) {
             case R.id.rpkg_all:
-                showOrLoadApplications();
+                filterApps(-1);
+                G.saveSelectedFilter(99);
                 break;
             case R.id.rpkg_core:
-                showApplications(null, 0, false);
+                filterApps(2);
+                G.saveSelectedFilter(0);
                 break;
             case R.id.rpkg_sys:
-                showApplications(null, 1, false);
+                filterApps(0);
+                G.saveSelectedFilter(1);
                 break;
             case R.id.rpkg_user:
-                showApplications(null, 2, false);
+                filterApps(1);
+                G.saveSelectedFilter(2);
                 break;
         }
     }
@@ -492,6 +641,7 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
         initDone = 0;
         //startRootShell();
         reloadPreferences();
+        //registerNetwork();
     }
 
     private void addColumns(int id) {
@@ -592,41 +742,41 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
         }
     }
 
-    private boolean passCheck() {
-        if (G.enableDeviceCheck()) {
-            deviceCheck();
-        } else {
-            switch (G.protectionLevel()) {
-                case "p0":
-                    return true;
-                case "p1":
-                    final String oldpwd = G.profile_pwd();
-                    if (oldpwd.length() == 0) {
-                        return true;
-                    } else {
-                        // Check the password
-                        requestPassword();
-                    }
-                    break;
-                case "p2":
-                    final String pwd = G.sPrefs.getString("LockPassword", "");
-                    if (pwd.length() == 0) {
-                        return true;
-                    } else {
-                        requestPassword();
-                    }
-                    break;
-                case "p3":
+    /* private boolean passCheck() {
+         if (G.enableDeviceCheck()) {
+             deviceCheck();
+         } else {
+             switch (G.protectionLevel()) {
+                 case "p0":
+                     return true;
+                 case "p1":
+                     final String oldpwd = G.profile_pwd();
+                     if (oldpwd.length() == 0) {
+                         return true;
+                     } else {
+                         // Check the password
+                         requestPassword();
+                     }
+                     break;
+                 case "p2":
+                     final String pwd = G.sPrefs.getString("LockPassword", "");
+                     if (pwd.length() == 0) {
+                         return true;
+                     } else {
+                         requestPassword();
+                     }
+                     break;
+                 case "p3":
 
-                    if (FingerprintUtil.isAndroidSupport() && G.isFingerprintEnabled()) {
+                     if (FingerprintUtil.isAndroidSupport() && G.isFingerprintEnabled()) {
 
-                        requestFingerprint();
-                    }
-            }
-        }
-        return false;
-    }
-
+                         requestFingerprint();
+                     }
+             }
+         }
+         return false;
+     }
+ */
     @Override
     protected void onPause() {
         super.onPause();
@@ -649,6 +799,7 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
         index = this.listview.getFirstVisiblePosition();
         View v = this.listview.getChildAt(0);
         top = (v == null) ? 0 : v.getTop();
+        G.activityPaused();
     }
 
     /**
@@ -663,29 +814,6 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
         }
         if (changed)
             editor.commit();
-    }
-
-    /**
-     * Refresh informative header
-     */
-    private void refreshHeader() {
-        final String mode = G.pPrefs.getString(Api.PREF_MODE, Api.MODE_WHITELIST);
-        //final TextView labelmode = (TextView) this.findViewById(R.id.label_mode);
-        final Resources res = getResources();
-
-        if (mode.equals(Api.MODE_WHITELIST)) {
-            if (mainMenu != null) {
-                mainMenu.findItem(R.id.allowmode).setChecked(true);
-                mainMenu.findItem(R.id.menu_mode).setIcon(R.drawable.ic_allow);
-            }
-        } else {
-            if (mainMenu != null) {
-                mainMenu.findItem(R.id.blockmode).setChecked(true);
-                mainMenu.findItem(R.id.menu_mode).setIcon(R.drawable.ic_deny);
-            }
-        }
-        //int resid = (mode.equals(Api.MODE_WHITELIST) ? R.string.mode_whitelist: R.string.mode_blacklist);
-        //labelmode.setText(res.getString(R.string.mode_header, res.getString(resid)));
     }
 
 
@@ -715,7 +843,7 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
     /**
      * Request the password lock before displayed the main screen.
      */
-    private void requestPassword() {
+    /*private void requestPassword() {
         switch (G.protectionLevel()) {
             case "p1":
                 new MaterialDialog.Builder(MainActivity.this).cancelable(false)
@@ -768,9 +896,9 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
 
     }
 
-    /**
+    *//**
      * Request the fingerprint lock before displayed the main screen.
-     */
+     *//*
     private void requestFingerprint() {
         FingerprintUtil.FingerprintDialog dialog = new FingerprintUtil.FingerprintDialog(this);
         dialog.setOnFingerprintFailureListener(new FingerprintUtil.OnFingerprintFailure() {
@@ -781,8 +909,30 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
             }
         });
         dialog.show();
-    }
+    }*/
 
+    /**
+     * Refresh informative header
+     */
+    private void refreshHeader() {
+        final String mode = G.pPrefs.getString(Api.PREF_MODE, Api.MODE_WHITELIST);
+        //final TextView labelmode = (TextView) this.findViewById(R.id.label_mode);
+        final Resources res = getResources();
+
+        if (mode.equals(Api.MODE_WHITELIST)) {
+            if (mainMenu != null) {
+                mainMenu.findItem(R.id.allowmode).setChecked(true);
+                mainMenu.findItem(R.id.menu_mode).setIcon(R.drawable.ic_allow);
+            }
+        } else {
+            if (mainMenu != null) {
+                mainMenu.findItem(R.id.blockmode).setChecked(true);
+                mainMenu.findItem(R.id.menu_mode).setIcon(R.drawable.ic_deny);
+            }
+        }
+        //int resid = (mode.equals(Api.MODE_WHITELIST) ? R.string.mode_whitelist: R.string.mode_blacklist);
+        //labelmode.setText(res.getString(R.string.mode_header, res.getString(resid)));
+    }
 
     /**
      * If the applications are cached, just show them, otherwise load and show
@@ -849,88 +999,20 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
 
     }
 
-    public class GetAppList extends AsyncTask<Void, Integer, Void> {
-
-        Context context = null;
-
-        public GetAppList setContext(Context context) {
-            this.context = context;
-            return this;
-        }
-
-        @Override
-        protected void onPreExecute() {
-            plsWait = new MaterialDialog.Builder(context).cancelable(false).
-                    title(getString(R.string.reading_apps)).progress(false, getPackageManager().getInstalledApplications(0)
-                    .size(), true).show();
-            doProgress(0);
-        }
-
-        public void doProgress(int value) {
-            publishProgress(value);
-        }
-
-        @Override
-        protected Void doInBackground(Void... params) {
-            Api.getApps(MainActivity.this, this);
-            if (isCancelled())
-                return null;
-            //publishProgress(-1);
-            return null;
-        }
-
-        @Override
-        protected void onPostExecute(Void result) {
-            selectFilterGroup();
-            doProgress(-1);
-            try {
-                try {
-                    if (plsWait != null && plsWait.isShowing()) {
-                        plsWait.dismiss();
-                    }
-                } catch (final IllegalArgumentException e) {
-                    // Handle or log or ignore
-                } catch (final Exception e) {
-                    // Handle or log or ignore
-                } finally {
-                    plsWait.dismiss();
-                    plsWait = null;
-                }
-                mSwipeLayout.setRefreshing(false);
-            } catch (Exception e) {
-                // nothing
-                if (plsWait != null) {
-                    plsWait.dismiss();
-                    plsWait = null;
-                }
-            }
-        }
-
-        @Override
-        protected void onProgressUpdate(Integer... progress) {
-
-            if (progress[0] == 0 || progress[0] == -1) {
-                //do nothing
-            } else {
-                if (plsWait != null) {
-                    plsWait.incrementProgress(progress[0]);
-                }
-            }
-        }
-    }
-
     ;
 
     /**
      * Show the list of applications
      */
-    private void showApplications(final String searchStr, int flag, boolean showAll) {
+    private void showApplications(final String searchStr) {
 
         setDirty(false);
+
         List<PackageInfoData> searchApp = new ArrayList<>();
         HashSet<Integer> unique = new HashSet<>();
         final List<PackageInfoData> apps = Api.getApps(this, null);
         boolean isResultsFound = false;
+
         if (searchStr != null && searchStr.length() > 1) {
             for (PackageInfoData app : apps) {
                 for (String str : app.names) {
@@ -944,53 +1026,25 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
                     }
                 }
             }
-        } else if (flag > -1) {
-            switch (flag) {
-                case 0:
-                    for (PackageInfoData app : apps) {
-                        if (app.pkgName.startsWith("dev.afwall.special")) {
-                            searchApp.add(app);
-                        }
-                    }
-                    break;
-                case 1:
-                    for (PackageInfoData app : apps) {
-                        if (app.appinfo != null && (app.appinfo.flags & ApplicationInfo.FLAG_SYSTEM) != 0) {
-                            searchApp.add(app);
-                        }
-                    }
-                    break;
-                case 2:
-                    for (PackageInfoData app : apps) {
-                        if (app.appinfo != null && (app.appinfo.flags & ApplicationInfo.FLAG_SYSTEM) == 0) {
-                            searchApp.add(app);
-                        }
-                    }
-                    break;
-            }
-
         }
-        List<PackageInfoData> apps2;
-        if (showAll || (searchStr != null && searchStr.equals(""))) {
+
+        List<PackageInfoData> apps2 = null;
+        if (searchStr != null && searchStr.equals("")) {
             apps2 = apps;
         } else if (isResultsFound || searchApp.size() > 0) {
             apps2 = searchApp;
-        } else {
-            apps2 = new ArrayList<PackageInfoData>();
         }
-        synchronized (apps2) {
-            // Sort applications - selected first, then alphabetically
-            try {
+        // Sort applications - selected first, then alphabetically
+        try {
+            if (apps2 != null) {
                 Collections.sort(apps2, new PackageComparator());
-            } catch (IllegalArgumentException e) {
-                Log.d(Api.TAG, "IllegalArgumentException on Sort");
+                this.listview.setAdapter(new AppListArrayAdapter(this, getApplicationContext(), apps2));
+                // restore
+                this.listview.setSelectionFromTop(index, top);
             }
+        } catch (Exception e) {
+            Log.d(Api.TAG, "Exception on Sorting");
         }
-
-        this.listview.setAdapter(new AppListArrayAdapter(this, getApplicationContext(), apps2));
-        // restore
-        this.listview.setSelectionFromTop(index, top);
-
     }
 
     @Override
@@ -1040,9 +1094,8 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
     }
 
     public void menuSetApplyOrSave(final Menu menu, final boolean isEnabled) {
-        runOnUiThread(new Runnable() {
-            @Override
-            public void run() {
+        runOnUiThread(() -> {
+            if (menu != null) {
                 if (isEnabled) {
                     menu.findItem(R.id.menu_toggle).setTitle(R.string.fw_disabled).setIcon(R.drawable.notification_error);
                     menu.findItem(R.id.menu_apply).setTitle(R.string.applyrules);
@@ -1061,9 +1114,14 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
         //language
         Api.updateLanguage(getApplicationContext(), G.locale());
         if (menu != null) {
-            menuSetApplyOrSave(menu, Api.isEnabled(MainActivity.this));
+            menuSetApplyOrSave(mainMenu, Api.isEnabled(MainActivity.this));
         }
         return true;
+    }
+
+    private void disableFirewall() {
+        Api.setEnabled(this, false, true);
+        menuSetApplyOrSave(MainActivity.this.mainMenu, false);
     }
 
     private void disableOrEnable() {
@@ -1146,7 +1204,7 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
                 return true;
             case R.id.menu_exit:
                 finish();
-                System.exit(0);
+                //System.exit(0);
                 return false;
             case R.id.menu_help:
                 showAbout();
@@ -1210,23 +1268,20 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
         filterText.setEllipsize(TruncateAt.END);
         filterText.setSingleLine();
 
-        MenuItemCompat.setOnActionExpandListener(item, new MenuItemCompat.OnActionExpandListener() {
+        item.setOnActionExpandListener(new MenuItem.OnActionExpandListener() {
             @Override
             public boolean onMenuItemActionCollapse(MenuItem item) {
                 // Do something when collapsed
-                showApplications("", 0, true);
+                selectFilterGroup();
                 return true;  // Return true to collapse action view
             }
 
             @Override
             public boolean onMenuItemActionExpand(MenuItem item) {
-                filterText.post(new Runnable() {
-                    @Override
-                    public void run() {
-                        filterText.requestFocus();
-                        InputMethodManager imm = (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
-                        imm.showSoftInput(filterText, InputMethodManager.SHOW_IMPLICIT);
-                    }
+                filterText.post(() -> {
+                    filterText.requestFocus();
+                    InputMethodManager imm = (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
+                    imm.showSoftInput(filterText, InputMethodManager.SHOW_IMPLICIT);
                 });
                 return true;  // Return true to expand action view
             }
@@ -1369,24 +1424,6 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
                 .show();
     }
 
-    private TextWatcher filterTextWatcher = new TextWatcher() {
-
-        public void afterTextChanged(Editable s) {
-            showApplications(s.toString(), -1, false);
-        }
-
-
-        public void beforeTextChanged(CharSequence s, int start, int count,
-                                      int after) {
-        }
-
-        public void onTextChanged(CharSequence s, int start, int before,
-                                  int count) {
-            showApplications(s.toString(), -1, false);
-        }
-
-    };
-
     private void showPreferences() {
         Intent i = new Intent(this, PreferencesActivity.class);
         //startActivity(i);
@@ -1444,9 +1481,11 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
                     @Override
                     public void onClick(@NonNull MaterialDialog dialog, @NonNull DialogAction which) {
                         purgeRules();
-                        if (G.activeNotification()) {
+                       /* if (G.activeNotification()) {
                             Api.showNotification(Api.isEnabled(getApplicationContext()), getApplicationContext());
-                        }
+                        }*/
+                        Api.updateNotification(Api.isEnabled(getApplicationContext()), getApplicationContext());
+                        //ServiceCompat.stopForeground(FirewallService.class,Service.STOP_FOREGROUND_REMOVE);
                         dialog.dismiss();
                     }
                 })
@@ -1599,7 +1638,6 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
         }
     }
 
-
     /**
      * Apply or save iptables rules, showing a visual indication
      */
@@ -1607,7 +1645,7 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
         final boolean enabled = Api.isEnabled(this);
         final Context ctx = getApplicationContext();
 
-        Api.saveRules(ctx, Api.getApps(ctx, null), true);
+        Api.generateRules(ctx, Api.getApps(ctx, null), true);
 
         if (!enabled) {
             Api.setEnabled(ctx, false, true);
@@ -1615,141 +1653,18 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
             setDirty(false);
             return;
         }
-        Api.showNotification(Api.isEnabled(getApplicationContext()), getApplicationContext());
+        //Api.showNotification(Api.isEnabled(getApplicationContext()), getApplicationContext());
+        Api.updateNotification(Api.isEnabled(getApplicationContext()), getApplicationContext());
         new RunApply().executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
-    }
-
-
-    private class RunQuickApply extends AsyncTask<Void, Long, Void> {
-        boolean enabled = Api.isEnabled(getApplicationContext());
-        Api.RuleDataSet dataSet = null;
-        boolean returnStatus = false;
-
-        RunQuickApply() {
-        }
-
-        private RunQuickApply setDataSet(Api.RuleDataSet data) {
-            this.dataSet = data;
-            return this;
-        }
-
-        @Override
-        protected void onPreExecute() {
-            progress = new MaterialDialog.Builder(MainActivity.this)
-                    .title(R.string.working)
-                    .cancelable(false)
-                    .content(enabled ? R.string.applying_rules
-                            : R.string.saving_rules)
-                    .progress(true, 0)
-                    .show();
-        }
-
-        @Override
-        protected Void doInBackground(Void... params) {
-            //set the progress
-            Api.applyQuickSavedIptablesRules(getApplicationContext(), dataSet, true, new RootCommand()
-                    .setSuccessToast(R.string.rules_applied)
-                    .setFailureToast(R.string.error_apply)
-                    .setReopenShell(true)
-                    .setCallback(new RootCommand.Callback() {
-                        public void cbFunc(RootCommand state) {
-                            try {
-                                progress.dismiss();
-                            } catch (Exception ex) {
-                            }
-                            queue.clear();
-                            if (state.exitCode == 0) {
-                                //make sure we run on UI thread
-                                runOnUiThread(new Runnable() {
-                                    @Override
-                                    public void run() {
-                                        setDirty(false);
-                                        getFab().setBackgroundTintList(ColorStateList.valueOf(Color.parseColor("#ffd740")));
-                                    }
-                                });
-                            }
-                        }
-                    }));
-
-            return null;
-        }
-
-        @Override
-        protected void onPostExecute(Void aVoid) {
-            super.onPostExecute(aVoid);
-        }
-    }
-
-    private class RunApply extends AsyncTask<Void, Long, Void> {
-        boolean enabled = Api.isEnabled(getApplicationContext());
-
-        @Override
-        protected void onPreExecute() {
-            progress = new MaterialDialog.Builder(MainActivity.this)
-                    .title(R.string.working)
-                    .cancelable(false)
-                    .content(enabled ? R.string.applying_rules
-                            : R.string.saving_rules)
-                    .progress(true, 0)
-                    .show();
-        }
-
-        @Override
-        protected Void doInBackground(Void... params) {
-            //set the progress
-            Api.applySavedIptablesRules(getApplicationContext(), true, new RootCommand()
-                    .setSuccessToast(R.string.rules_applied)
-                    .setFailureToast(R.string.error_apply)
-                    .setReopenShell(true)
-                    .setCallback(new RootCommand.Callback() {
-
-                        public void cbFunc(RootCommand state) {
-                            try {
-                                progress.dismiss();
-                            } catch (Exception ex) {
-                            }
-                            boolean result = enabled;
-                            if (state.exitCode == 0) {
-                                setDirty(false);
-                            } else {
-                                result = false;
-                            }
-                            menuSetApplyOrSave(MainActivity.this.mainMenu, result);
-                            Api.setEnabled(ctx, result, true);
-                        }
-                    }));
-            return null;
-        }
-
-        @Override
-        protected void onPostExecute(Void aVoid) {
-            super.onPostExecute(aVoid);
-        }
     }
 
     /**
      * Purge iptables rules, showing a visual indication
      */
     private void purgeRules() {
-        final Context ctx = getApplicationContext();
-
-        Api.purgeIptables(ctx, true, new RootCommand()
-                .setSuccessToast(R.string.rules_deleted)
-                .setFailureToast(R.string.error_purge)
-                .setReopenShell(true)
-                .setCallback(new RootCommand.Callback() {
-                    public void cbFunc(RootCommand state) {
-                        // error exit -> assume the rules are still enabled
-                        // we shouldn't wind up in this situation, but if we do, the user's
-                        // best bet is to click Apply then toggle Enabled again
-                        boolean nowEnabled = state.exitCode != 0;
-
-                        Api.setEnabled(ctx, nowEnabled, true);
-                        menuSetApplyOrSave(MainActivity.this.mainMenu, nowEnabled);
-                    }
-                }));
+        new PurgeTask(MainActivity.this).execute();
+        menuSetApplyOrSave(mainMenu, Api.isEnabled(getApplicationContext()));
     }
-
 
     @Override
     public void onClick(View v) {
@@ -1771,6 +1686,9 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
                 selectActionConfirmation(v.getId());
                 break;
             case R.id.img_lan:
+                selectActionConfirmation(v.getId());
+                break;
+            case R.id.img_tor:
                 selectActionConfirmation(v.getId());
                 break;
             case R.id.img_invert:
@@ -1796,7 +1714,26 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
                 PackageInfoData data = (PackageInfoData) adapter.getItem(item);
                 if (data.uid != Api.SPECIAL_UID_ANY) {
                     data.selected_lan = flag;
-                    addToQueue(data);
+                    //addToQueue(data);
+                }
+                setDirty(true);
+            }
+            ((BaseAdapter) adapter).notifyDataSetChanged();
+        }
+    }
+
+    private void selectAllTor(boolean flag) {
+        if (this.listview == null) {
+            this.listview = (ListView) this.findViewById(R.id.listview);
+        }
+        ListAdapter adapter = listview.getAdapter();
+        if (adapter != null) {
+            int count = adapter.getCount(), item;
+            for (item = 0; item < count; item++) {
+                PackageInfoData data = (PackageInfoData) adapter.getItem(item);
+                if (data.uid != Api.SPECIAL_UID_ANY) {
+                    data.selected_tor = flag;
+                    //addToQueue(data);
                 }
                 setDirty(true);
             }
@@ -1807,17 +1744,16 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
     /**
      * Cache any batch event by user
      *
-     * @param data
+     * @param
      */
-    public static void addToQueue(@NonNull PackageInfoData data) {
-        if (queue == null) {
+    /*public static void addToQueue(@NonNull PackageInfoData data) {
+     *//*if (queue == null) {
             queue = new HashSet<>();
         }
         //add or update based on new data
         queue.add(data);
-        getFab().setBackgroundTintList(ColorStateList.valueOf(Color.RED));
-    }
-
+        getFab().setBackgroundTintList(ColorStateList.valueOf(Color.RED));*//*
+    }*/
     private void selectAllVPN(boolean flag) {
         if (this.listview == null) {
             this.listview = (ListView) this.findViewById(R.id.listview);
@@ -1829,7 +1765,7 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
                 PackageInfoData data = (PackageInfoData) adapter.getItem(item);
                 if (data.uid != Api.SPECIAL_UID_ANY) {
                     data.selected_vpn = flag;
-                    addToQueue(data);
+                    //addToQueue(data);
                 }
                 setDirty(true);
             }
@@ -1863,8 +1799,11 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
                         case R.id.img_lan:
                             data.selected_lan = !data.selected_lan;
                             break;
+                        case R.id.img_tor:
+                            data.selected_tor = !data.selected_tor;
+                            break;
                     }
-                    addToQueue(data);
+                    //addToQueue(data);
                 }
                 setDirty(true);
             }
@@ -1887,14 +1826,14 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
                     data.selected_roam = !data.selected_roam;
                     data.selected_vpn = !data.selected_vpn;
                     data.selected_lan = !data.selected_lan;
-                    addToQueue(data);
+                    data.selected_tor = !data.selected_tor;
+                    //addToQueue(data);
                 }
                 setDirty(true);
             }
             ((BaseAdapter) adapter).notifyDataSetChanged();
         }
     }
-
 
     private void selectAllRoam(boolean flag) {
         if (this.listview == null) {
@@ -1907,7 +1846,7 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
                 PackageInfoData data = (PackageInfoData) adapter.getItem(item);
                 if (data.uid != Api.SPECIAL_UID_ANY) {
                     data.selected_roam = flag;
-                    addToQueue(data);
+                    //addToQueue(data);
                 }
                 setDirty(true);
             }
@@ -1929,7 +1868,8 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
                 data.selected_roam = false;
                 data.selected_vpn = false;
                 data.selected_lan = false;
-                addToQueue(data);
+                data.selected_tor = false;
+                //addToQueue(data);
                 setDirty(true);
             }
             ((BaseAdapter) adapter).notifyDataSetChanged();
@@ -1947,9 +1887,9 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
                 PackageInfoData data = (PackageInfoData) adapter.getItem(item);
                 if (data.uid != Api.SPECIAL_UID_ANY) {
                     data.selected_3g = flag;
-                    addToQueue(data);
+                    //addToQueue(data);
                 }
-                addToQueue(data);
+                // addToQueue(data);
                 setDirty(true);
             }
             ((BaseAdapter) adapter).notifyDataSetChanged();
@@ -1968,7 +1908,7 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
                 PackageInfoData data = (PackageInfoData) adapter.getItem(item);
                 if (data.uid != Api.SPECIAL_UID_ANY) {
                     data.selected_wifi = flag;
-                    addToQueue(data);
+                    // addToQueue(data);
                 }
                 setDirty(true);
             }
@@ -2007,8 +1947,8 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
                                     public void onClick(@NonNull MaterialDialog dialog, @NonNull DialogAction which) {
                                         setDirty(false);
                                         Api.applications = null;
-                                        finish();
-                                        System.exit(0);
+                                        //finish();
+                                        //System.exit(0);
                                         //force reload rules.
                                         MainActivity.super.onKeyDown(keyCode, event);
                                         dialog.dismiss();
@@ -2019,8 +1959,8 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
 
                     } else {
                         setDirty(false);
-                        finish();
-                        System.exit(0);
+                        //finish();
+                        //System.exit(0);
                     }
 
 
@@ -2028,7 +1968,6 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
         }
         return super.onKeyUp(keyCode, event);
     }
-
 
     /**
      * @param i
@@ -2099,6 +2038,10 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
                                         dialog.setTitle(text + getString(R.string.lan));
                                         selectAllLAN(true);
                                         break;
+                                    case R.id.img_tor:
+                                        dialog.setTitle(text + getString(R.string.tor));
+                                        selectAllTor(true);
+                                        break;
                                 }
                                 break;
                             case 1:
@@ -2117,6 +2060,9 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
                                         break;
                                     case R.id.img_lan:
                                         dialog.setTitle(text + getString(R.string.lan));
+                                        break;
+                                    case R.id.img_tor:
+                                        dialog.setTitle(text + getString(R.string.tor));
                                         break;
                                 }
                                 selectRevert(i);
@@ -2144,13 +2090,16 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
                                         dialog.setTitle(text + getString(R.string.lan));
                                         selectAllLAN(false);
                                         break;
+                                    case R.id.img_tor:
+                                        dialog.setTitle(text + getString(R.string.tor));
+                                        selectAllTor(false);
+                                        break;
                                 }
                                 break;
                         }
                     }
                 }).show();
     }
-
 
     protected boolean isSuPackage(PackageManager pm, String suPackage) {
         boolean found = false;
@@ -2164,11 +2113,227 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
         return found;
     }
 
+    @Override
+    public void onDestroy() {
+        super.onDestroy();
+        if (dialogLegend != null) {
+            dialogLegend.dismiss();
+            dialogLegend = null;
+        }
+        if (uiProgressReceiver != null) {
+            unregisterReceiver(uiProgressReceiver);
+        }
+        if (toastReceiver != null) {
+            unregisterReceiver(toastReceiver);
+        }
+
+    }
+
+    @Override
+    protected void attachBaseContext(Context base) {
+        super.attachBaseContext(Api.updateBaseContextLocale(base));
+    }
+
+    private static class PurgeTask extends AsyncTask<Void, Void, Boolean> {
+
+        private MaterialDialog progress;
+        private Context ctx;
+
+        private PurgeTask(Context context) {
+            this.ctx = context;
+        }
+
+        @Override
+        protected void onPreExecute() {
+            progress = new MaterialDialog.Builder(ctx)
+                    .title(R.string.working)
+                    .cancelable(false)
+                    .content(R.string.purging_rules)
+                    .progress(true, 0)
+                    .show();
+        }
+
+        @Override
+        protected Boolean doInBackground(Void... voids) {
+            if (G.hasRoot() && Shell.SU.available()) {
+                Api.purgeIptables(ctx, true, new RootCommand()
+                        .setSuccessToast(R.string.rules_deleted)
+                        .setFailureToast(R.string.error_purge)
+                        .setReopenShell(true)
+                        .setCallback(new RootCommand.Callback() {
+                            public void cbFunc(RootCommand state) {
+                                // error exit -> assume the rules are still enabled
+                                // we shouldn't wind up in this situation, but if we do, the user's
+                                // best bet is to click Apply then toggle Enabled again
+                                try {
+                                    progress.dismiss();
+                                } catch (Exception ex) {
+                                }
+                                boolean nowEnabled = state.exitCode != 0;
+                                Api.setEnabled(ctx, nowEnabled, true);
+                            }
+                        }));
+                return true;
+            } else {
+                return false;
+            }
+        }
+
+        @Override
+        protected void onPostExecute(Boolean aVoid) {
+            super.onPostExecute(aVoid);
+            if (!aVoid) {
+                Toast.makeText(ctx, ctx.getString(R.string.error_su_toast), Toast.LENGTH_SHORT).show();
+                try {
+                    progress.dismiss();
+                    progress = null;
+                } catch (Exception ex) {
+                }
+            }
+        }
+    }
+
+    public class GetAppList extends AsyncTask<Void, Integer, Void> {
+
+        Context context = null;
+
+        public GetAppList setContext(Context context) {
+            this.context = context;
+            return this;
+        }
+
+        @Override
+        protected void onPreExecute() {
+            plsWait = new MaterialDialog.Builder(context).cancelable(false).
+                    title(getString(R.string.reading_apps)).progress(false, getPackageManager().getInstalledApplications(0)
+                    .size(), true).show();
+            doProgress(0);
+        }
+
+        public void doProgress(int value) {
+            publishProgress(value);
+        }
+
+        @Override
+        protected Void doInBackground(Void... params) {
+            Api.getApps(MainActivity.this, this);
+            if (isCancelled())
+                return null;
+            //publishProgress(-1);
+            return null;
+        }
+
+        @Override
+        protected void onPostExecute(Void result) {
+            selectFilterGroup();
+            doProgress(-1);
+            try {
+                try {
+                    if (plsWait != null && plsWait.isShowing()) {
+                        plsWait.dismiss();
+                    }
+                } catch (final IllegalArgumentException e) {
+                    // Handle or log or ignore
+                } catch (final Exception e) {
+                    // Handle or log or ignore
+                } finally {
+                    plsWait.dismiss();
+                    plsWait = null;
+                }
+                mSwipeLayout.setRefreshing(false);
+            } catch (Exception e) {
+                // nothing
+                if (plsWait != null) {
+                    plsWait.dismiss();
+                    plsWait = null;
+                }
+            }
+        }
+
+        @Override
+        protected void onProgressUpdate(Integer... progress) {
+
+            if (progress[0] == 0 || progress[0] == -1) {
+                //do nothing
+            } else {
+                if (plsWait != null) {
+                    plsWait.incrementProgress(progress[0]);
+                }
+            }
+        }
+    }
+
+    private class RunApply extends AsyncTask<Void, Long, Boolean> {
+        boolean enabled = Api.isEnabled(getApplicationContext());
+
+        @Override
+        protected void onPreExecute() {
+            runProgress = new MaterialDialog.Builder(MainActivity.this)
+                    .title(R.string.su_check_title)
+                    .cancelable(false)
+                    .content(enabled ? R.string.su_check_message
+                            : R.string.saving_rules)
+                    .progress(true, 0)
+                    .show();
+        }
+
+        @Override
+        protected Boolean doInBackground(Void... params) {
+            //set the progress
+            if (!Shell.SU.available()) return false;
+
+            Api.setRulesUpToDate(false);
+            Api.applySavedIptablesRules(getApplicationContext(), true, new RootCommand()
+                    .setSuccessToast(R.string.rules_applied)
+                    .setFailureToast(R.string.error_apply)
+                    .setReopenShell(true)
+                    .setCallback(new RootCommand.Callback() {
+                        public void cbFunc(RootCommand state) {
+                            try {
+                                if (runProgress != null) {
+                                    runProgress.dismiss();
+                                }
+                            } catch (Exception ex) {
+                            }
+                            if (state.exitCode == 0) {
+                                setDirty(false);
+                            }
+                            //queue.clear();
+                            runOnUiThread(() -> {
+                                setDirty(false);
+                                if (state.exitCode != 0) {
+                                    Api.errorNotification(ctx);
+                                    menuSetApplyOrSave(MainActivity.this.mainMenu, false);
+                                    Api.setEnabled(ctx, false, true);
+                                } else {
+                                    menuSetApplyOrSave(MainActivity.this.mainMenu, enabled);
+                                    Api.setEnabled(ctx, enabled, true);
+                                }
+                            });
+                        }
+                    }));
+            return true;
+        }
+
+        @Override
+        protected void onPostExecute(Boolean aVoid) {
+            super.onPostExecute(aVoid);
+            if (!aVoid) {
+                Toast.makeText(getApplicationContext(), getString(R.string.error_su_toast), Toast.LENGTH_SHORT).show();
+                disableFirewall();
+                try {
+                    runProgress.dismiss();
+                } catch (Exception ex) {
+                }
+            }
+        }
+    }
+
     private class RootCheck extends AsyncTask<Void, Void, Void> {
-        private Context context = null;
         MaterialDialog suDialog = null;
         boolean unsupportedSU = false;
-        boolean[] suGranted = { false };
+        boolean[] suGranted = {false};
+        private Context context = null;
         //private boolean suAvailable = false;
 
         public RootCheck setContext(Context context) {
@@ -2187,18 +2352,11 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
         protected Void doInBackground(Void... params) {
             rootShell = (new Shell.Builder())
                     .useSU()
-                    .addCommand("id", 0, new Shell.OnCommandResultListener() {
-                        @Override
-                        public void onCommandResult(int commandCode, int exitCode, List<String> output) {
-                            synchronized (suGranted) {
-                                suGranted[0] = true;
-                            }
+                    .addCommand("id", 0, (commandCode, exitCode, output) -> {
+                        synchronized (suGranted) {
+                            suGranted[0] = true;
                         }
-                    })
-                    .open(new Shell.OnCommandResultListener() {
-                        @Override
-                        public void onCommandResult(int commandCode, int exitCode, List<String> output) {
-                        }
+                    }).open((commandCode, exitCode, output) -> {
                     });
             rootShell.waitForIdle();
             unsupportedSU = isSuPackage(getPackageManager(), "com.kingouser.com");
@@ -2243,27 +2401,13 @@ public class MainActivity extends AppCompatActivity implements AdapterView.OnIte
                 G.kingDetected(true);
             }*/
             if (!suGranted[0] && !unsupportedSU && !isFinishing()) {
+                disableFirewall();
                 showRootNotFoundMessage();
             } else {
                 G.hasRoot(suGranted[0]);
                 startRootShell(rootShell);
-                passCheck();
+                new SecurityUtil(MainActivity.this).passCheck();
             }
-        }
-    }
-
-    @Override
-    public void onDestroy() {
-        super.onDestroy();
-        if (dialogLegend != null) {
-            dialogLegend.dismiss();
-            dialogLegend = null;
-        }
-        if (uiProgressReceiver != null) {
-            unregisterReceiver(uiProgressReceiver);
-        }
-        if (toastReceiver != null) {
-            unregisterReceiver(toastReceiver);
         }
     }
 }

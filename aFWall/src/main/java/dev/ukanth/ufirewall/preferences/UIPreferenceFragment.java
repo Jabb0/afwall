@@ -8,7 +8,6 @@ import android.preference.PreferenceFragment;
 
 import dev.ukanth.ufirewall.Api;
 import dev.ukanth.ufirewall.R;
-import dev.ukanth.ufirewall.util.G;
 
 public class UIPreferenceFragment extends PreferenceFragment  implements
 		SharedPreferences.OnSharedPreferenceChangeListener {
@@ -19,9 +18,6 @@ public class UIPreferenceFragment extends PreferenceFragment  implements
 		super.onCreate(savedInstanceState);
 		// Load the preferences from an XML resource
 		addPreferencesFromResource(R.xml.ui_preferences);
-		if(G.isDoKey(ctx) || G.isDonate()) {
-			findPreference("quickApply").setEnabled(true);
-		}
 	}
 
 	@Override
@@ -55,8 +51,9 @@ public class UIPreferenceFragment extends PreferenceFragment  implements
 		if(ctx != null) {
 			if (key.equals("notification_priority")) {
 				NotificationManager notificationManager = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
-				notificationManager.cancel(33341);
-				Api.showNotification(Api.isEnabled(ctx), ctx);
+				notificationManager.cancel(1);
+				//Api.showNotification(Api.isEnabled(ctx), ctx);
+				Api.updateNotification(Api.isEnabled(ctx), ctx);
 			}
 		}
 	}
